@@ -1,0 +1,22 @@
+name: threei
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - napari=0.7.*
+  - pyside6
+  - magicgui
+  - qtpy
+  - numpy
+  - scipy
+  - scikit-image
+  - astropy
+  - photutils
+  - opencv
+  - numba
+  - vispy
+  - pillow
+  - tifffile
+  - pip
+  - pip:
+      - -e ./napari-fits-hdu

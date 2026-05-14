@@ -1,0 +1,15 @@
+napari==0.7.*
+PySide6
+magicgui
+qtpy
+numpy
+scipy
+scikit-image
+astropy
+photutils
+opencv-python
+numba
+vispy
+Pillow
+tifffile
+-e ./napari-fits-hdu

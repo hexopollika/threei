@@ -1,0 +1,352 @@
+# Copyright (c) 2026 Sattarov T.N.
+# Licensed under the MIT License
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+from magicgui.widgets import ComboBox, Container, FloatSlider, IntSlider, Label
+from qtpy.QtWidgets import QFormLayout, QTabWidget, QVBoxLayout, QWidget
+
+from threei.ui.filters.ls.params import (
+    _DEFAULT_ANALYSIS_ANGLE_DELTA_DEG,
+    _DEFAULT_ROTATION_BACKEND,
+    _DEFAULT_SAFE_GHOST_WEIGHT,
+    _DEFAULT_SPREAD_DELTA_DEG,
+    _DEFAULT_UNCERTAIN_DARK_WEIGHT,
+    _ls_request_params_t,
+    _normalized_ls_mode,
+)
+from threei.processing.ls import opencv_available, rotation_backend_choices
+
+
+def _default_rotation_backend_for_ui() -> str:
+    if opencv_available():
+        return "opencv"
+    return _DEFAULT_ROTATION_BACKEND
+
+
+class ls_panel_widgets_t:
+    _TAB_MODES = ("classic", "ghost_aware")
+    _GHOST_FORM_ROWS = (
+        ("rotation spread", "spread_delta_deg"),
+        ("ghost suppression", "safe_ghost_weight"),
+        ("uncertain darks", "uncertain_dark_weight"),
+        ("analysis spread", "analysis_angle_delta_deg"),
+    )
+
+    def __init__(self, on_change):
+        self._on_change = on_change
+        self._widget: Any = Container(layout="vertical")
+        self._tabs = QTabWidget()
+
+        self.mode = ComboBox(
+            name="mode",
+            choices=[
+                ("Classic", "classic"),
+                ("MAGS", "ghost_aware"),
+            ],
+            value="classic",
+            visible=False,
+        )
+        self.angle = FloatSlider(
+            name="angle",
+            value=5.0,
+            min=0.0,
+            max=90.0,
+            tracking=True,
+        )
+        self.clip = FloatSlider(
+            name="clip",
+            value=1.0,
+            min=0.0,
+            max=5.0,
+            tracking=True,
+        )
+        self.order = IntSlider(
+            name="order",
+            value=3,
+            min=0,
+            max=3,
+            tracking=False,
+        )
+        self.contrast_mode = ComboBox(
+            name="contrast_mode",
+            choices=[("Symmetric", "symmetric"), ("Asymmetric", "asymmetric")],
+            value="symmetric",
+        )
+        self.rotation_backend = ComboBox(
+            name="rotation_backend",
+            label="Backend",
+            choices=rotation_backend_choices(),
+            value=_default_rotation_backend_for_ui(),
+        )
+        backend_status = "" if opencv_available() else "OpenCV backend unavailable"
+        self.rotation_backend_status = Label(
+            name="rotation_backend_status",
+            value=backend_status,
+            label="",
+        )
+        self.spread_delta_deg = FloatSlider(
+            name="spread_delta_deg",
+            label="",
+            value=_DEFAULT_SPREAD_DELTA_DEG,
+            min=0.0,
+            max=2.0,
+            step=0.05,
+            tracking=False,
+        )
+        self.safe_ghost_weight = FloatSlider(
+            name="safe_ghost_weight",
+            label="",
+            value=_DEFAULT_SAFE_GHOST_WEIGHT,
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            tracking=True,
+        )
+        self.uncertain_dark_weight = FloatSlider(
+            name="uncertain_dark_weight",
+            label="",
+            value=_DEFAULT_UNCERTAIN_DARK_WEIGHT,
+            min=0.0,
+            max=0.5,
+            step=0.05,
+            tracking=True,
+        )
+        self.analysis_angle_delta_deg = FloatSlider(
+            name="analysis_angle_delta_deg",
+            label="",
+            value=_DEFAULT_ANALYSIS_ANGLE_DELTA_DEG,
+            min=0.0,
+            max=2.0,
+            step=0.05,
+            tracking=False,
+        )
+    @classmethod
+    def create(cls, on_change):
+        panel = cls(on_change)
+        return panel.create_widget()
+
+    def create_widget(self):
+        self._add_common_controls()
+        self._add_mode_tabs()
+        self._connect_changes()
+        self._expose_widgets()
+        return self._widget
+
+    def _add_common_controls(self) -> None:
+        self._widget.append(self.rotation_backend)
+        if str(self.rotation_backend_status.value):
+            self._widget.append(self.rotation_backend_status)
+        self._widget.append(self.angle)
+        self._widget.append(self.clip)
+        self._widget.append(self.order)
+        self._widget.append(self.contrast_mode)
+
+    def _add_mode_tabs(self) -> None:
+        classic_index = self._tabs.addTab(
+            self._tab_page(
+                [
+                    Label(
+                        name="classic_status",
+                        value="baseline symmetric LS",
+                        label="",
+                    ),
+                ],
+            ),
+            "classic",
+        )
+        self._tabs.setTabToolTip(classic_index, "Classic Larson-Sekanina")
+        mags_index = self._tabs.addTab(
+            self._form_tab_page(
+                status=Label(
+                    name="ghost_status",
+                    value="Multi-angle ghost suppression",
+                    label="",
+                ),
+                rows=[
+                    ("rotation spread", self.spread_delta_deg),
+                    ("ghost suppression", self.safe_ghost_weight),
+                    ("uncertain darks", self.uncertain_dark_weight),
+                    ("analysis spread", self.analysis_angle_delta_deg),
+                ],
+            ),
+            "MAGS",
+        )
+        self._tabs.setTabToolTip(mags_index, "Multi-angle ghost suppression")
+        native_layout = self._widget.native.layout()
+        native_layout.addWidget(self._tabs)
+
+    @staticmethod
+    def _tab_page(widgets) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setSpacing(6)
+        for widget in widgets:
+            layout.addWidget(widget.native)
+        layout.addStretch(1)
+        return page
+
+    @staticmethod
+    def _form_tab_page(*, status, rows) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setSpacing(6)
+        layout.addWidget(status.native)
+
+        form_layout = QFormLayout()
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        form_layout.setSpacing(6)
+        for label, widget in rows:
+            form_layout.addRow(str(label), widget.native)
+        layout.addLayout(form_layout)
+        layout.addStretch(1)
+        return page
+
+    def _connect_changes(self) -> None:
+        for widget in (
+            self.angle,
+            self.clip,
+            self.order,
+            self.contrast_mode,
+            self.rotation_backend,
+            self.spread_delta_deg,
+            self.safe_ghost_weight,
+            self.uncertain_dark_weight,
+            self.analysis_angle_delta_deg,
+        ):
+            widget.changed.connect(self._submit_current_values)
+        self._tabs.currentChanged.connect(self._on_tab_changed)
+
+    def submit_current(self) -> None:
+        self._submit_current_values()
+
+    def _expose_widgets(self) -> None:
+        for name in (
+            "mode",
+            "angle",
+            "clip",
+            "order",
+            "contrast_mode",
+            "rotation_backend",
+            "rotation_backend_status",
+            "spread_delta_deg",
+            "safe_ghost_weight",
+            "uncertain_dark_weight",
+            "analysis_angle_delta_deg",
+        ):
+            if not hasattr(self._widget, name):
+                setattr(self._widget, name, getattr(self, name))
+        self._widget._ls_mode_tabs = self._tabs
+        self._widget._ls_panel_widgets = self
+        self._widget._ls_ghost_form_rows = tuple(self._GHOST_FORM_ROWS)
+
+    def _on_tab_changed(self, index: int) -> None:
+        if 0 <= int(index) < len(self._TAB_MODES):
+            self.mode.value = self._TAB_MODES[int(index)]
+        self._submit_current_values()
+
+    def _submit_current_values(self, *_args) -> None:
+        self._on_change(
+            mode=self.mode.value,
+            angle=self.angle.value,
+            clip=self.clip.value,
+            order=self.order.value,
+            contrast_mode=self.contrast_mode.value,
+            rotation_backend=self.rotation_backend.value,
+            spread_delta_deg=self.spread_delta_deg.value,
+            safe_ghost_weight=self.safe_ghost_weight.value,
+            uncertain_dark_weight=self.uncertain_dark_weight.value,
+            analysis_angle_delta_deg=self.analysis_angle_delta_deg.value,
+        )
+
+
+class ls_panel_controller_t:
+    def __init__(
+        self,
+        *,
+        current_base_layer,
+        preview_size,
+        submit_request,
+        target_center_getter,
+    ):
+        self._current_base_layer = current_base_layer
+        self._preview_size = preview_size
+        self._submit_request = submit_request
+        self._target_center_getter = target_center_getter
+        self._widget = None
+
+    def create_widget(self):
+        self._widget = ls_panel_widgets_t.create(self.on_widget_changed)
+        self._widget._pipeline_panel_controller = self
+        self._widget._pipeline_submit_current = self.submit_current
+        return self._widget
+
+    def submit_current(self):
+        panel_widgets = getattr(self._widget, "_ls_panel_widgets", None)
+        submit_current = getattr(panel_widgets, "submit_current", None)
+        if callable(submit_current):
+            submit_current()
+
+    def current_target_center(self):
+        if not callable(self._target_center_getter):
+            return None
+        try:
+            center = self._target_center_getter()
+        except Exception:
+            return None
+        if (
+            isinstance(center, (tuple, list, np.ndarray))
+            and len(center) >= 2
+            and np.isfinite(center[0])
+            and np.isfinite(center[1])
+        ):
+            return (float(center[0]), float(center[1]))
+        return None
+
+    def on_widget_changed(
+        self,
+        mode="classic",
+        angle=5.0,
+        clip=1.0,
+        order=3,
+        contrast_mode="symmetric",
+        rotation_backend=None,
+        spread_delta_deg=_DEFAULT_SPREAD_DELTA_DEG,
+        safe_ghost_weight=_DEFAULT_SAFE_GHOST_WEIGHT,
+        uncertain_dark_weight=_DEFAULT_UNCERTAIN_DARK_WEIGHT,
+        analysis_angle_delta_deg=_DEFAULT_ANALYSIS_ANGLE_DELTA_DEG,
+        show_debug_layers=False,
+        show_comparison_layers=False,
+    ):
+        current_base_layer = self._current_base_layer()
+        if current_base_layer is None:
+            return
+
+        center = self.current_target_center()
+        if center is None:
+            return
+
+        request = {
+            "base_layer": current_base_layer,
+            **_ls_request_params_t(
+                mode=_normalized_ls_mode(mode),
+                angle=float(angle),
+                clip=float(clip),
+                order=int(order),
+                preview_size=int(self._preview_size()),
+                center=(float(center[0]), float(center[1])),
+                contrast_mode=str(contrast_mode),
+                rotation_backend=str(rotation_backend or _default_rotation_backend_for_ui()),
+                spread_delta_deg=float(spread_delta_deg),
+                safe_ghost_weight=float(safe_ghost_weight),
+                uncertain_dark_weight=float(uncertain_dark_weight),
+                analysis_angle_delta_deg=float(analysis_angle_delta_deg),
+                show_debug_layers=bool(show_debug_layers),
+                show_comparison_layers=bool(show_comparison_layers),
+            ).to_payload(),
+        }
+        self._submit_request(request)

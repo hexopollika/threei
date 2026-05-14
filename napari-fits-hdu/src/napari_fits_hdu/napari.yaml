@@ -1,0 +1,25 @@
+# src/napari_fits_hdu/napari.yaml
+name: napari-fits-hdu
+display_name: FITS HDU Switcher
+schema_version: 0.1.0
+
+on_activate: napari_fits_hdu:activate
+
+contributions:
+  commands:
+    - id: napari-fits-hdu.get_reader
+      title: FITS reader selector
+      python_name: napari_fits_hdu:get_reader
+
+    - id: napari-fits-hdu.fits_hdu_widget
+      title: FITS HDU Widget
+      python_name: napari_fits_hdu:fits_hdu_widget
+
+  readers:
+    - command: napari-fits-hdu.get_reader
+      filename_patterns: ["*.fits", "*.fit", "*.fts"]
+      accepts_directories: false
+
+  widgets:
+    - command: napari-fits-hdu.fits_hdu_widget
+      display_name: FITS HDU
