@@ -1,11 +1,11 @@
 # Copyright (c) 2026 Sattarov T.N.
 # Licensed under the MIT License
 from threei.ui.observation.controller import (
-    observation_overlay_controller_t,
-    setup_observation_overlay,
+    observation_controller_t,
+    setup,
 )
 
 __all__ = [
-    "observation_overlay_controller_t",
-    "setup_observation_overlay",
+    "observation_controller_t",
+    "setup",
 ]

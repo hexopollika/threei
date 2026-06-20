@@ -143,10 +143,11 @@ def _scipy_rotate_window_into(
     y0, _, x0, _ = output_window_yx
     origin = np.asarray((float(y0), float(x0)), dtype=matrix.dtype)
     scipy_offset = scipy_offset + matrix @ origin
+    resolved_offset: Any = (float(scipy_offset[0]), float(scipy_offset[1]))
     affine_transform(
         image,
         matrix=matrix,
-        offset=(float(scipy_offset[0]), float(scipy_offset[1])),
+        offset=resolved_offset,
         output=out,
         order=int(order),
         mode="reflect",

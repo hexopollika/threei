@@ -6,15 +6,13 @@ from threei.ui.layers import image_layer_adapter_t
 from threei.ui.common.layer_types import LAYER_TYPE_KEY, LAYER_TYPE_PROCESSING_RESULT
 from threei.ui.common.node_models import filter_node_t
 from threei.ui.common.dock import (
-    dock_split_sizes_for_content,
+    rebalance_visible_docks_by_content,
     refresh_viewer_tab_style,
-    resize_docks_by_ratio,
     scrollable_dock_content,
 )
 
 
 _PROCESSING_NODE_DOCK_MINIMUM_WIDTH_PX = 420
-_PROCESSING_NODE_DOCK_FALLBACK_RATIO = (2, 3)
 
 
 class processing_node_runtime_controller_t:
@@ -53,10 +51,11 @@ class processing_node_lifecycle_controller_t:
         layer_registry,
         preview_state_controller,
         create_filter_widget,
-        create_preview_widget,
         sync_node_metadata,
         sync_visible_widgets,
         job_key_for_node,
+        activate_preview_target = None,
+        clear_preview_target = None,
     ):
         self._viewer = viewer
         self._forest = forest
@@ -64,9 +63,10 @@ class processing_node_lifecycle_controller_t:
         self._layer_registry = layer_registry
         self._preview_state_controller = preview_state_controller
         self._create_filter_widget = create_filter_widget
-        self._create_preview_widget = create_preview_widget
         self._sync_node_metadata = sync_node_metadata
         self._sync_visible_widgets = sync_visible_widgets
+        self._activate_preview_target = activate_preview_target
+        self._clear_preview_target = clear_preview_target
         self._job_key_for_node = job_key_for_node
         self._runtime_by_node_id: dict [str, processing_node_runtime_controller_t] = {}
 
@@ -99,7 +99,6 @@ class processing_node_lifecycle_controller_t:
             runtime_controller.on_output_layer,
             node,
         )
-        node.preview_widget = self._create_preview_widget (node)
         node.dock = self._viewer.window.add_dock_widget (
             scrollable_dock_content (
                 node.widget,
@@ -109,14 +108,8 @@ class processing_node_lifecycle_controller_t:
             area = "right",
             name = f"{filter_type}: {base_layer.name}",
         )
-        node.preview_dock = self._viewer.window.add_dock_widget (
-            node.preview_widget,
-            area = "right",
-            name = f"preview: {filter_type}: {base_layer.name}",
-        )
         refresh_viewer_tab_style (self._viewer)
         node.dock.setVisible (False)
-        node.preview_dock.setVisible (False)
 
         node.base_data_callback = runtime_controller.on_base_data
         base_layer.events.data.connect (node.base_data_callback)
@@ -129,6 +122,8 @@ class processing_node_lifecycle_controller_t:
         if node.output_layer_id is None:
             self.submit_current_widget (node.widget)
 
+        if callable (self._activate_preview_target):
+            self._activate_preview_target (node)
         self._sync_visible_widgets ()
         self._apply_node_dock_layout (node)
         return node
@@ -148,14 +143,6 @@ class processing_node_lifecycle_controller_t:
 
         previous_output_layer_id = self._forest.set_output_layer (node, output_layer_id)
         self._sync_node_metadata (node)
-        if node.preview_widget is not None:
-            preview_size_widget = getattr (
-                node.preview_widget,
-                "_pipeline_preview_size_widget",
-                None,
-            )
-            if preview_size_widget is not None:
-                self._preview_state_controller.set_node_preview_size (node, preview_size_widget.value)
 
         if previous_output_layer_id is None:
             self._viewer.layers.selection.active = layer
@@ -202,6 +189,8 @@ class processing_node_lifecycle_controller_t:
                 )
 
         removed_output_layer_id = node.output_layer_id
+        if callable (self._clear_preview_target):
+            self._clear_preview_target (node)
         self._forest.remove_node (node)
         if parent is not None:
             self._sync_node_metadata (parent)
@@ -249,16 +238,9 @@ class processing_node_lifecycle_controller_t:
 
     def _apply_node_dock_layout (self, node: filter_node_t) -> None:
         qt_window = getattr (getattr (self._viewer, "window", None), "_qt_window", None)
-        dock_sizes = dock_split_sizes_for_content (
+        rebalance_visible_docks_by_content (
             qt_window,
-            node.widget,
-            orientation = "vertical",
-        )
-        resize_docks_by_ratio (
-            qt_window,
-            (node.dock, node.preview_dock),
-            dock_sizes or _PROCESSING_NODE_DOCK_FALLBACK_RATIO,
-            orientation = "vertical",
+            area = "right",
         )
 
     def _rebind_node_base (
@@ -308,17 +290,8 @@ class processing_node_lifecycle_controller_t:
                     close_dock ()
                 except Exception:
                     pass
-        if node.preview_dock is not None:
-            close_preview_dock = getattr (node.preview_dock, "close", None)
-            if callable (close_preview_dock):
-                try:
-                    close_preview_dock ()
-                except Exception:
-                    pass
 
     @staticmethod
     def _create_node_id () -> str:
         from uuid import uuid4
         return str (uuid4 ())
-
-

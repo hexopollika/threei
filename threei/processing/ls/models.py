@@ -2,12 +2,12 @@
 # Licensed under the MIT License
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
 
-ls_mode_t = Literal["classic", "ghost_aware_robust"]
+ls_mode_t = Literal["classic", "ghost_aware"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,53 +48,70 @@ class ls_robust_result_t:
 
 
 @dataclass(frozen=True, slots=True)
-class ghost_analysis_config_t:
-    parent_blur_sigma_px: float
-    central_safe_inner_radius_px: float
-    central_safe_outer_radius_px: float
-
-
-@dataclass(frozen=True, slots=True)
-class ghost_region_maps_t:
-    safe_ghost_score: np.ndarray
-    uncertain_dark_score: np.ndarray
-    preserve_score: np.ndarray
-
-
-@dataclass(frozen=True, slots=True)
-class ghost_aware_config_t:
-    robust: ls_robust_config_t
-    analysis: ghost_analysis_config_t
-    analysis_angle_delta_deg: float
-    safe_ghost_weight: float
-    uncertain_dark_weight: float
-
-
-@dataclass(frozen=True, slots=True)
-class ghost_aware_result_t:
+class mags_request_t:
     image: np.ndarray
-    robust_result: ls_robust_result_t
-    analysis_ls_images: tuple[np.ndarray, ...]
-    ghost_maps: ghost_region_maps_t
-    response_weight: np.ndarray
+    center_yx: tuple[float, float]
+    angle_deg: float
+    order: int
+    output_window_yx: tuple[int, int, int, int] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class mags_config_t:
+    angle_delta_deg: float = 0.75
+    angle_samples: int = 3
+    persistence_percentile: float = 50.0
+    local_contrast_sigma_px: float = 1.5
+    coherence_sigma_px: float = 1.0
+    score_smoothing_sigma_px: float = 1.0
+    score_percentile: float = 95.0
+    suppression_strength: float = 1.0
+    ghost_response_gamma: float = 0.5
+    ghost_selectivity: float = 0.01
+    ghost_gate_width: float = 0.06
+    preserve_guard: float = 0.45
+    uncertainty_guard: float = 0.35
+    correction_smoothing_sigma_px: float = 0.0
+    edge_inner_px: int = 2
+    edge_safe_px: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class mags_diagnostic_result_t:
+    classic_ls: np.ndarray
+    positive_ghost_score: np.ndarray
+    negative_ghost_score: np.ndarray
+    ghost_score: np.ndarray
+    real_structure_score: np.ndarray
+    uncertainty: np.ndarray
+    raw_positive_ghost_evidence: np.ndarray
+    raw_negative_ghost_evidence: np.ndarray
+    raw_real_structure_evidence: np.ndarray
+    edge_risk: np.ndarray
+    metadata: dict[str, object] = field(default_factory=dict)
+    raw_source_structure: np.ndarray | None = None
+    raw_rotation_parent_support: np.ndarray | None = None
+    source_support: np.ndarray | None = None
+    rotation_parent_support: np.ndarray | None = None
+    predicted_positive_ghost: np.ndarray | None = None
+    predicted_negative_ghost: np.ndarray | None = None
+    model_match_score: np.ndarray | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class mags_result_t:
+    image: np.ndarray
+    diagnostic: mags_diagnostic_result_t
+    suppression: np.ndarray
+    preserve_weight: np.ndarray
+    metadata: dict[str, object] = field(default_factory=dict)
+    ghost_gate: np.ndarray | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class debug_layer_t:
     name: str
     image: np.ndarray
-
-
-@dataclass(frozen=True, slots=True)
-class ghost_debug_view_t:
-    layers: tuple[debug_layer_t, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ls_comparison_result_t:
-    classic_result: ls_classic_result_t
-    robust_result: ls_robust_result_t
-    ghost_aware_result: ghost_aware_result_t
 
 
 @dataclass(frozen=True, slots=True)

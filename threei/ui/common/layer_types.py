@@ -11,8 +11,3 @@ LAYER_DATA_ROLE_KEY = "pipeline_data_role"
 
 LAYER_DATA_ROLE_SCIENTIFIC = "scientific"
 LAYER_DATA_ROLE_VISUAL_STRETCH = "visual_stretch"
-
-VISUAL_STRETCH_FILTER_TYPES = frozenset ((
-    "nonlinear",
-    "segmented_tone",
-))

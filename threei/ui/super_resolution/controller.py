@@ -10,12 +10,12 @@ from threei.ui.super_resolution.layer_queries import (
 from threei.ui.super_resolution.lifecycle_controller import super_resolution_lifecycle_controller_t
 from threei.ui.super_resolution.panel_widgets import create_sr_panel_widgets
 from threei.ui.super_resolution.result_controller import super_resolution_result_controller_t
-from threei.ui.super_resolution.result_helpers import (
+from threei.ui.super_resolution.result_display import (
+    finite_data_limits,
     image_center_yx,
-    nanpercentile_limits,
-    set_sr_layer_metadata,
-    upsert_image_layer,
 )
+from threei.ui.super_resolution.result_layers import upsert_image_layer
+from threei.ui.super_resolution.result_metadata import set_sr_layer_metadata
 from threei.ui.super_resolution.run_controller import super_resolution_run_controller_t
 from threei.ui.super_resolution.runtime import (
     _normalize_var_to_err_policy,
@@ -69,7 +69,7 @@ class super_resolution_panel_controller_t (viewer_component_t):
             status_label = self.ui.status,
             image_center_getter = image_center_yx,
             reference_layer_finder = find_reference_layer,
-            nanpercentile_limits_getter = nanpercentile_limits,
+            display_limits_getter = finite_data_limits,
             upsert_image_layer = upsert_image_layer,
             set_sr_layer_metadata = set_sr_layer_metadata,
             show_error = show_error,

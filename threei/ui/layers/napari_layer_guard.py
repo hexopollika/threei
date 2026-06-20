@@ -58,7 +58,7 @@ class napari_layer_insert_guard_t(AbstractContextManager):
                 self._previous_activate_on_insert = _MISSING
         return self
 
-    def __exit__(self, exc_type, exc, traceback) -> bool:
+    def __exit__(self, _exc_type, exc, _traceback) -> bool:
         self._restore_activate_on_insert()
         if self._restore_active:
             self.restore_active_layer(self.target_active_layer())
@@ -110,7 +110,7 @@ class napari_layer_insert_guard_t(AbstractContextManager):
             values[attr] = _clone_value(value)
         if not values:
             return None
-        return _camera_snapshot_t(camera=camera, values=values)
+        return _camera_snapshot_t(camera, values)
 
     def _restore_camera(self) -> None:
         snapshot = self._camera_snapshot

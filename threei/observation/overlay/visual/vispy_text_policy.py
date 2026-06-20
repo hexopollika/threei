@@ -25,7 +25,6 @@ class observation_vispy_text_policy_t:
 
     def font_size_px(
         self,
-        *,
         font_family: str | None,
         text_scale: float = 1.0,
         base_size_px: float = DEFAULT_TEXT_BASE_SIZE_PX,
@@ -50,9 +49,9 @@ class observation_vispy_text_policy_t:
             preserve_vertical_whitespace=bool(preserve_vertical_whitespace),
         )
         font_size = self.font_size_px(
-            font_family=font_family,
-            text_scale=float(text_scale),
-            base_size_px=float(base_size_px),
+            font_family,
+            float(text_scale),
+            float(base_size_px),
         )
         return float(line_count) * float(font_size) * float(self.line_advance_factor)
 

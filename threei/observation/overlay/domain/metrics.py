@@ -15,14 +15,14 @@ from threei.ui.common.provenance import (
 )
 
 if TYPE_CHECKING:
-    from threei.observation.overlay.scene_manager import observation_overlay_scene_manager_t
+    from threei.observation.overlay.scene_manager import observation_scene_manager_t
 
 
-class observation_overlay_metrics_builder_t:
+class observation_metrics_builder_t:
     def __init__ (
         self,
         *,
-        overlay_scene_manager: observation_overlay_scene_manager_t,
+        overlay_scene_manager: observation_scene_manager_t,
         processing_author_getter: Callable[[], Any] | None = None,
     ):
         self._overlay_scene_manager = overlay_scene_manager
@@ -45,7 +45,7 @@ class observation_overlay_metrics_builder_t:
         processing_line = self._processing_summary_line (
             source_metadata,
             source_layer,
-            show_display_line = show_display_line,
+            show_display_line,
         )
         return str (size_line), str (processing_line)
 
@@ -275,7 +275,6 @@ class observation_overlay_metrics_builder_t:
         self,
         source_metadata,
         source_layer,
-        *,
         show_display_line: bool,
     ) -> str:
         lines = []

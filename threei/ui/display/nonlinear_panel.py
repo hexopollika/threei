@@ -8,7 +8,7 @@ import numpy as np
 from magicgui import magicgui
 
 from threei.processing.nonlinear import apply_transform
-from threei.processing.nonlinear import robust_norm
+from threei.processing.normalization import safe_percentile_bounds
 from threei.ui.common.layer_types import LAYER_DATA_ROLE_KEY
 from threei.ui.common.layer_types import LAYER_DATA_ROLE_VISUAL_STRETCH
 from threei.ui.common.layer_types import LAYER_TYPE_DISPLAY_RESULT
@@ -18,14 +18,14 @@ from threei.ui.common.provenance import (
     provenance_pending_step_metadata,
     provenance_step_t,
 )
-from threei.ui.image_tools.widget_controller import (
-    filter_panel_base_t,
-    filter_widget_controller_t,
+from threei.ui.derived_image.widget_controller import (
+    derived_image_panel_base_t,
+    derived_image_widget_controller_t,
     fixed_contrast_policy_t,
 )
 
 
-class nonlinear_widget_controller_t (filter_widget_controller_t):
+class nonlinear_widget_controller_t (derived_image_widget_controller_t):
     CONTRAST_POLICY = fixed_contrast_policy_t ((0.0, 1.0))
 
     def compute_image (
@@ -38,7 +38,12 @@ class nonlinear_widget_controller_t (filter_widget_controller_t):
     ):
         params = _nonlinear_request_params_t.from_request (request)
         image = work_data.astype (np.float64, copy = False)
-        image = robust_norm (image, params.p_low, params.p_high)
+        image = _robust_norm_from_source_bounds (
+            image,
+            source_data,
+            params.p_low,
+            params.p_high,
+        )
         image = apply_transform (
             image,
             params.mode,
@@ -54,7 +59,7 @@ class nonlinear_widget_controller_t (filter_widget_controller_t):
         }
         metadata.update (provenance_pending_step_metadata (
             provenance_step_t (
-                kind = PROVENANCE_KIND_DISPLAY,
+                PROVENANCE_KIND_DISPLAY,
                 stage = "display",
                 method = "nonlinear",
                 summary = f"{params.mode} p{params.p_low:g}-{params.p_high:g}",
@@ -68,6 +73,27 @@ class nonlinear_widget_controller_t (filter_widget_controller_t):
 
     def contrast_policy (self):
         return self.CONTRAST_POLICY
+
+
+def _robust_norm_from_source_bounds (image, source_data, p_low, p_high):
+    data = np.asarray (image, dtype = np.float64)
+    out = np.zeros_like (data, dtype = np.float64)
+    try:
+        source = np.asarray (source_data, dtype = np.float64)
+    except Exception:
+        source = data
+    finite = source [np.isfinite (source)]
+    if finite.size == 0:
+        return out
+    low, high = safe_percentile_bounds (p_low, p_high)
+    lo, hi = np.percentile (finite, (low, high))
+    lo = float (lo)
+    hi = float (hi)
+    if not np.isfinite (lo) or not np.isfinite (hi) or hi <= lo:
+        return out
+    data_finite = np.isfinite (data)
+    out [data_finite] = np.clip ((data [data_finite] - lo) / (hi - lo), 0.0, 1.0)
+    return out
 
 
 @dataclass (slots = True, frozen = True)
@@ -145,7 +171,7 @@ class nonlinear_panel_controller_t:
         ))
 
 
-class nonlinear_display_panel_t (filter_panel_base_t):
+class nonlinear_display_panel_t (derived_image_panel_base_t):
     controller_cls = nonlinear_widget_controller_t
     output_suffix = "nonlinear"
 

@@ -2,30 +2,44 @@
 # Licensed under the MIT License
 from __future__ import annotations
 
-from dataclasses import dataclass
+import threei.observation.overlay.scene_model as scene_model
 import math
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Callable
 
-from threei.observation.overlay.debug import observation_overlay_debug_reporter_t
+from threei.observation.overlay.debug import observation_debug_reporter_t
+from threei.observation.overlay.domain.compass import compass_pa_overrides_t
 from threei.observation.overlay.ephemeris import (
     observation_ephemeris_job_t,
     observation_ephemeris_resolution_t,
-    observation_overlay_ephemeris_resolver_t,
+    observation_ephemeris_resolver_t,
 )
-from threei.observation.overlay.domain.metrics import observation_overlay_metrics_builder_t
-from threei.observation.overlay.application.render_specs import observation_overlay_render_spec_factory_t
-from threei.observation.overlay.models import (
-    observation_overlay_block_ui_state_t,
-    observation_overlay_context_t,
-    observation_overlay_hud_layout_spec_t,
-    observation_overlay_layer_apply_spec_t,
-    observation_overlay_layout_t,
-    observation_overlay_render_bundle_t,
-    observation_overlay_render_settings_t,
-    observation_overlay_scene_t,
-    observation_viewport_context_t,
+from threei.observation.overlay.domain.metrics import observation_metrics_builder_t
+from threei.observation.overlay.application.build_contracts import (
+    _compass_info_result_t,
+    _compass_result_t,
+    _full_build_result_t,
+    _info_result_t,
+    _prepared_rebuild_context_t,
+    _rebuild_profile_t,
+    _scene_apply_metadata_request_t,
+    _scene_apply_metadata_result_t,
+    compass_info_apply_request_t,
+    compass_info_build_request_t,
+    compass_request_t,
+    full_build_request_t,
+    hud_layout_for_block_request_t,
+    hud_spec_for_block_request_t,
+    info_request_t,
+    measurement_apply_request_t,
+    measurement_request_t,
 )
+from threei.observation.overlay.application.compass_info_builder import observation_compass_info_builder_t
+from threei.observation.overlay.application.full_builder import observation_full_builder_t
+from threei.observation.overlay.application.measurement_builder import observation_measurement_builder_t
+from threei.observation.overlay.application.render_specs import observation_render_spec_factory_t
+import threei.observation.overlay.panel_state as panel_state
+import threei.observation.overlay.render_contracts as render_contracts
 from threei.observation.target_ephemeris_provider import (
     target_ephemeris_provider_t,
     target_ephemeris_request_builder_t,
@@ -34,186 +48,15 @@ from threei.observation.target_ephemeris_provider import (
 )
 
 if TYPE_CHECKING:
-    from threei.observation.overlay.scene_manager import observation_overlay_scene_manager_t
+    from threei.observation.overlay.scene_manager import observation_scene_manager_t
 
 
-@dataclass (frozen = True)
-class _measurement_text_bundle_t:
-    size_text: str
-    processing_text: str
-
-
-@dataclass (frozen = True)
-class _info_overlay_result_t:
-    scene: Any | None = None
-    text: str = ""
-    error: str = ""
-
-
-@dataclass (frozen = True)
-class _compass_overlay_result_t:
-    scene: Any | None = None
-    solution: Any | None = None
-    observer_source: str = ""
-    observer_mode: str = ""
-    observer_horizons_location_id: str = ""
-    used_observer_attempt_tag: str = ""
-    used_observer_location_id: str = ""
-    failed_observer_attempts: tuple [str, ...] = ()
-    error: str = ""
-    target_distance_au: float | None = None
-
-
-@dataclass (frozen = True)
-class _measurement_hud_text_blocks_t:
-    measurement_text_hud_layout: observation_overlay_hud_layout_spec_t
-    author_hud_layout: observation_overlay_hud_layout_spec_t
-    measurement_text_scene: observation_overlay_scene_t
-    processing_scene: observation_overlay_scene_t
-    hud_specs_ms: float
-    text_blocks_ms: float
-
-
-@dataclass (frozen = True)
-class _measurement_overlay_result_t:
-    target_distance_au: float | None
-    measurement_texts: _measurement_text_bundle_t
-    measurement_scene: observation_overlay_scene_t
-    measurement_text_scene: observation_overlay_scene_t
-    processing_scene: observation_overlay_scene_t
-    hud_specs_ms: float
-    text_blocks_ms: float
-
-
-@dataclass (frozen = True)
-class _prepared_rebuild_context_t:
-    update_ctx: Any
-    observation_layout: observation_overlay_layout_t
-    measurement_area_geometry: observation_overlay_layout_t
-    image_shape: tuple [int, ...]
-    placement_bounds_yx: tuple [tuple [float, float], tuple [float, float]] | None
-    render_settings: observation_overlay_render_settings_t
-    resolved: Any
-    context: Any
-    headers: list [Any]
-
-
-@dataclass (frozen = True)
-class _rebuild_profile_t:
-    layer_name: str
-    timings_ms: dict [str, float]
-    total_started_at: float
-    update_ctx_ready: bool
-    context_ready: bool
-    has_solution: bool
-    has_output: bool
-
-
-@dataclass (frozen = True)
-class _scene_apply_metadata_request_t:
-    layer_adapter: object
-    observation_layout: observation_overlay_layout_t
-    measurement_area_geometry: observation_overlay_layout_t
-    render_settings: observation_overlay_render_settings_t
-    layer_specs: tuple [observation_overlay_layer_apply_spec_t, ...]
-    timings_ms: dict [str, float]
-    direction_result: _compass_overlay_result_t | None = None
-
-
-@dataclass (frozen = True)
-class _scene_apply_metadata_result_t:
-    merged_scene: observation_overlay_scene_t
-
-
-@dataclass(frozen=True, slots=True)
-class compass_overlay_request_t:
-    context: observation_overlay_context_t | None
-    headers: list
-    layer_adapter: object
-    image_shape: tuple [int, ...]
-    compass_layout: observation_overlay_layout_t
-    render_settings: observation_overlay_render_settings_t
-    timings_ms: dict [str, float]
-
-@dataclass(frozen=True, slots=True)
-class info_overlay_request_t:
-    headers: list
-    solution: object
-    image_shape: tuple [int, ...]
-    placement_bounds_yx: tuple [tuple [float, float], tuple [float, float]] | None
-    nominal_side_px: float
-    render_settings: observation_overlay_render_settings_t
-    timings_ms: dict [str, float]
-    data_per_screen_px_yx: tuple [float, float] | None = None
-    viewport_context: observation_viewport_context_t | None = None
-
-@dataclass(frozen=True, slots=True)
-class measurement_overlay_request_t:
-    context: observation_overlay_context_t | None
-    headers: list
-    layer_adapter: object
-    measurement_area_geometry: observation_overlay_layout_t
-    image_shape: tuple [int, ...]
-    placement_bounds_yx: tuple [tuple [float, float], tuple [float, float]] | None
-    nominal_side_px: float
-    render_settings: observation_overlay_render_settings_t
-    timings_ms: dict [str, float]
-    target_distance_au: float | None = None
-    include_measurement_scene: bool = True
-    data_per_screen_px_yx: tuple [float, float] | None = None
-    viewport_context: observation_viewport_context_t | None = None
-
-@dataclass(frozen=True, slots=True)
-class measurement_layer_apply_request_t:
-    update_ctx: object
-    render_settings: observation_overlay_render_settings_t
-    measurement_scene: object
-    measurement_text_scene: object
-    processing_scene: object
-
-@dataclass(frozen=True, slots=True)
-class hud_layout_for_block_request_t:
-    base_side_px: float
-    image_shape: tuple [int, ...]
-    visible_bounds_yx: tuple [tuple [float, float], tuple [float, float]] | None
-    block: observation_overlay_block_ui_state_t
-    data_per_screen_px_yx: tuple [float, float] | None = None
-    viewport_context: observation_viewport_context_t | None = None
-
-@dataclass(frozen=True, slots=True)
-class hud_spec_for_block_request_t:
-    image_shape: tuple [int, ...]
-    visible_bounds_yx: tuple [tuple [float, float], tuple [float, float]] | None
-    block: observation_overlay_block_ui_state_t
-    nominal_side_px: float | None = None
-    data_per_screen_px_yx: tuple [float, float] | None = None
-    nominal_size_yx: tuple [float, float] | None = None
-    viewport_context: observation_viewport_context_t | None = None
-
-@dataclass(frozen=True, slots=True)
-class compass_info_layer_apply_request_t:
-    update_ctx: object
-    render_settings: observation_overlay_render_settings_t
-    compass_scene: object
-    info_scene: object
-
-@dataclass(frozen=True, slots=True)
-class measurement_hud_text_blocks_request_t:
-    image_shape: tuple [int, ...]
-    placement_bounds_yx: tuple [tuple [float, float], tuple [float, float]] | None
-    nominal_side_px: float
-    render_settings: observation_overlay_render_settings_t
-    measurement_texts: _measurement_text_bundle_t
-    measurement_area_geometry: observation_overlay_layout_t
-    data_per_screen_px_yx: tuple [float, float] | None = None
-    viewport_context: observation_viewport_context_t | None = None
-
-class observation_overlay_build_flow_t:
+class observation_build_flow_t:
     def __init__ (
         self,
         *,
         data_resolver,
-        overlay_scene_manager: observation_overlay_scene_manager_t,
+        overlay_scene_manager: observation_scene_manager_t,
         metadata_writer,
         info_formatter,
         status,
@@ -222,7 +65,7 @@ class observation_overlay_build_flow_t:
         prepare_overlay_update: Callable[..., Any],
         merge_and_apply_overlay: Callable[..., Any],
         merge_apply_timings_getter: Callable[[], Any] | None = None,
-        debug_reporter: observation_overlay_debug_reporter_t | None = None,
+        debug_reporter: observation_debug_reporter_t | None = None,
         ephemeris_provider: target_ephemeris_provider_t | None = None,
         ephemeris_request_builder: target_ephemeris_request_builder_t | None = None,
         target_name_override_getter: Callable[[], Any] | None = None,
@@ -242,24 +85,54 @@ class observation_overlay_build_flow_t:
         self._merge_apply_timings_getter = merge_apply_timings_getter if callable (merge_apply_timings_getter) else None
         self._debug_reporter = (
             debug_reporter
-            if isinstance (debug_reporter, observation_overlay_debug_reporter_t)
-            else observation_overlay_debug_reporter_t ()
+            if isinstance (debug_reporter, observation_debug_reporter_t)
+            else observation_debug_reporter_t ()
         )
-        self._ephemeris_resolver = observation_overlay_ephemeris_resolver_t (
+        self._ephemeris_resolver = observation_ephemeris_resolver_t (
             ephemeris_provider = ephemeris_provider,
             ephemeris_request_builder = ephemeris_request_builder,
             debug_reporter = self._debug_reporter,
             target_name_override_getter = target_name_override_getter,
             ephemeris_result_callback = ephemeris_result_callback,
         )
-        self._metrics_builder = observation_overlay_metrics_builder_t (
+        self._metrics_builder = observation_metrics_builder_t (
             overlay_scene_manager = self._overlay_scene_manager,
             processing_author_getter = processing_author_getter,
         )
-        self._render_spec_factory = observation_overlay_render_spec_factory_t (
+        self._render_spec_factory = observation_render_spec_factory_t (
             overlay_scene_manager = self._overlay_scene_manager,
             render_settings_getter = render_settings_getter,
         )
+
+    def _measurement_builder (self) -> observation_measurement_builder_t:
+        return observation_measurement_builder_t (
+            overlay_scene_manager = self._overlay_scene_manager,
+            metrics_builder = self._metrics_builder,
+            render_spec_factory = self._render_spec_factory,
+            resolve_ephemeris_resolution_with_fallback = self._resolve_ephemeris_resolution_with_fallback,
+            layer_metadata_copy = self._layer_metadata_copy,
+            block_layout_text_scale = self._block_layout_text_scale,
+            estimate_measurement_text_hud_size_yx_px = self._estimate_measurement_text_hud_size_yx_px,
+            elapsed_ms = self._elapsed_ms,
+        )
+
+    def _compass_info_builder (self) -> observation_compass_info_builder_t:
+        return observation_compass_info_builder_t (
+            status_messages = getattr (self, "_status_messages", None),
+            build_compass_result = self._build_compass_result,
+            build_info_result = self._build_info_result,
+            compass_info_layer_apply_specs = self._compass_info_layer_apply_specs,
+        )
+
+    def _full_builder (self) -> observation_full_builder_t:
+        return observation_full_builder_t (
+            status_messages = self._status_messages,
+            measurement_builder = self._measurement_builder (),
+            build_compass_result = self._build_compass_result,
+            build_info_result = self._build_info_result,
+            layer_apply_specs = self._layer_apply_specs,
+        )
+
     def rebuild_for_layer (
         self,
         *,
@@ -281,91 +154,20 @@ class observation_overlay_build_flow_t:
                 total_started_at,
             )
             return
-        update_ctx = prepared.update_ctx
-        observation_layout = prepared.observation_layout
-        measurement_area_geometry = prepared.measurement_area_geometry
-        image_shape = prepared.image_shape
-        placement_bounds_yx = prepared.placement_bounds_yx
-        viewport_context = update_ctx.viewport_context
-        data_per_screen_px_yx = self._prepared_data_per_screen_px_yx (prepared)
-        render_settings = prepared.render_settings
-        layout_specs_started_at = perf_counter ()
-        resolved_base_side_px = float (observation_layout.square_side_px)
-        hud_layout_for_block_request = hud_layout_for_block_request_t(
-            resolved_base_side_px,
-            image_shape,
-            placement_bounds_yx,
-            render_settings.compass_block,
-            data_per_screen_px_yx,
-            viewport_context = viewport_context,
-        )
-        compass_layout = self._hud_layout_for_block(hud_layout_for_block_request)
-        timings_ms ["layout_specs"] = self._elapsed_ms (layout_specs_started_at)
+        compass_layout = self._compass_layout_for_prepared_rebuild (prepared, timings_ms)
         context = prepared.context
-        headers = prepared.headers
-        compass_overlay_request = compass_overlay_request_t(
-            context,
-            headers,
-            layer_adapter,
-            image_shape,
-            compass_layout,
-            render_settings,
-            timings_ms,
-        )
-        compass_result = self._build_compass_overlay_result(compass_overlay_request)
-        resolved_nominal_side_px = float (observation_layout.square_side_px)
-        info_overlay_request = info_overlay_request_t(
-            headers,
-            compass_result.solution,
-            image_shape,
-            placement_bounds_yx,
-            resolved_nominal_side_px,
-            render_settings,
-            timings_ms,
-            data_per_screen_px_yx = data_per_screen_px_yx,
-            viewport_context = viewport_context,
-        )
-        info_result = self._build_info_overlay_result(info_overlay_request)
-        resolved_nominal_side_px = float (observation_layout.square_side_px)
-        measurement_overlay_request = measurement_overlay_request_t(
-            context,
-            headers,
-            layer_adapter,
-            measurement_area_geometry,
-            image_shape,
-            placement_bounds_yx,
-            resolved_nominal_side_px,
-            render_settings,
-            timings_ms,
-            compass_result.target_distance_au,
-            data_per_screen_px_yx = data_per_screen_px_yx,
-            viewport_context = viewport_context,
-        )
-        measurement_overlay = self._build_measurement_overlay_result(measurement_overlay_request)
-        if (
-            not info_result.text
-            and not measurement_overlay.measurement_texts.size_text
-            and not measurement_overlay.measurement_texts.processing_text
-        ):
-            resolved_error = self._status_messages.cannot_load_info_headers ()
-            info_result = _info_overlay_result_t (
-                info_result.scene,
-                info_result.text,
-                resolved_error,
+        full_result = self._build_full_result (
+            full_build_request_t (
+                layer_adapter,
+                prepared,
+                compass_layout,
+                timings_ms,
             )
-        measurement_scene = measurement_overlay.measurement_scene
-        measurement_text_scene = measurement_overlay.measurement_text_scene
-        processing_scene = measurement_overlay.processing_scene
-
-        has_output = bool (
-            compass_result.scene is not None
-            or info_result.scene is not None
-            or measurement_scene.has_content ()
-            or measurement_text_scene.has_content ()
-            or processing_scene.has_content ()
         )
-
-        if not has_output:
+        compass_result = full_result.compass_result
+        assert compass_result is not None
+        info_result = full_result.info_result
+        if not full_result.has_output:
             if bool (update_status):
                 self._status.value = str (compass_result.error or info_result.error or self._status_messages.invalid_image_data ())
             self._report_rebuild_outcome (
@@ -378,28 +180,13 @@ class observation_overlay_build_flow_t:
             )
             return
 
-        render_bundle = observation_overlay_render_bundle_t (
-            observation_layout,
-            measurement_area_geometry,
-            compass_layout,
-            render_settings,
-            measurement_scene,
-            compass_result.scene,
-            info_result.scene,
-            measurement_text_scene,
-            processing_scene,
-        )
-        layer_specs = self._layer_apply_specs (
-            update_ctx,
-            render_bundle,
-        )
         self._merge_apply_and_write_metadata (
             _scene_apply_metadata_request_t (
                 layer_adapter,
-                observation_layout,
-                measurement_area_geometry,
-                render_settings,
-                layer_specs,
+                prepared.observation_layout,
+                prepared.measurement_area_geometry,
+                prepared.render_settings,
+                full_result.layer_specs,
                 timings_ms,
                 compass_result,
             )
@@ -442,26 +229,7 @@ class observation_overlay_build_flow_t:
             )
             return None
 
-        update_ctx = prepared.update_ctx
-        observation_layout = prepared.observation_layout
-        measurement_area_geometry = prepared.measurement_area_geometry
-        image_shape = prepared.image_shape
-        placement_bounds_yx = prepared.placement_bounds_yx
-        viewport_context = update_ctx.viewport_context
-        data_per_screen_px_yx = self._prepared_data_per_screen_px_yx (prepared)
-        render_settings = prepared.render_settings
-        layout_specs_started_at = perf_counter ()
-        resolved_base_side_px = float (observation_layout.square_side_px)
-        hud_layout_for_block_request = hud_layout_for_block_request_t(
-            resolved_base_side_px,
-            image_shape,
-            placement_bounds_yx,
-            render_settings.compass_block,
-            data_per_screen_px_yx,
-            viewport_context = viewport_context,
-        )
-        compass_layout = self._hud_layout_for_block(hud_layout_for_block_request)
-        timings_ms ["layout_specs"] = self._elapsed_ms (layout_specs_started_at)
+        compass_layout = self._compass_layout_for_prepared_rebuild (prepared, timings_ms)
         context = prepared.context
         headers = prepared.headers
         ephemeris_job = self._prepare_ephemeris_job_for_layer (
@@ -473,58 +241,18 @@ class observation_overlay_build_flow_t:
         if target_distance_au is None and isinstance (ephemeris_job, observation_ephemeris_job_t):
             target_distance_au = ephemeris_job.target_distance_au
 
-        resolved_solution = None
-        resolved_nominal_side_px = float (observation_layout.square_side_px)
-        info_overlay_request = info_overlay_request_t(
-            headers,
-            resolved_solution,
-            image_shape,
-            placement_bounds_yx,
-            resolved_nominal_side_px,
-            render_settings,
-            timings_ms,
-            data_per_screen_px_yx,
-            viewport_context = viewport_context,
-        )
-        info_result = self._build_info_overlay_result(info_overlay_request)
-        resolved_nominal_side_px = float (observation_layout.square_side_px)
-        measurement_overlay_request = measurement_overlay_request_t(
-            context,
-            headers,
-            layer_adapter,
-            measurement_area_geometry,
-            image_shape,
-            placement_bounds_yx,
-            resolved_nominal_side_px,
-            render_settings,
-            timings_ms,
-            target_distance_au,
-            data_per_screen_px_yx = data_per_screen_px_yx,
-            viewport_context = viewport_context,
-        )
-        measurement_overlay = self._build_measurement_overlay_result(measurement_overlay_request)
-        if (
-            not info_result.text
-            and not measurement_overlay.measurement_texts.size_text
-            and not measurement_overlay.measurement_texts.processing_text
-        ):
-            resolved_error = self._status_messages.cannot_load_info_headers ()
-            info_result = _info_overlay_result_t (
-                info_result.scene,
-                info_result.text,
-                resolved_error,
+        full_result = self._build_full_result (
+            full_build_request_t (
+                layer_adapter,
+                prepared,
+                compass_layout,
+                timings_ms,
+                target_distance_au,
+                False,
             )
-        measurement_scene = measurement_overlay.measurement_scene
-        measurement_text_scene = measurement_overlay.measurement_text_scene
-        processing_scene = measurement_overlay.processing_scene
-
-        has_output = bool (
-            info_result.scene is not None
-            or measurement_scene.has_content ()
-            or measurement_text_scene.has_content ()
-            or processing_scene.has_content ()
         )
-        if not has_output:
+        info_result = full_result.info_result
+        if not full_result.has_output:
             if bool (update_status):
                 self._status.value = str (info_result.error or self._status_messages.invalid_image_data ())
             self._report_rebuild_outcome (
@@ -537,29 +265,13 @@ class observation_overlay_build_flow_t:
             )
             return ephemeris_job if self._ephemeris_job_has_request (ephemeris_job) else None
 
-        resolved_compass_scene = None
-        render_bundle = observation_overlay_render_bundle_t (
-            observation_layout,
-            measurement_area_geometry,
-            compass_layout,
-            render_settings,
-            measurement_scene,
-            resolved_compass_scene,
-            info_result.scene,
-            measurement_text_scene,
-            processing_scene,
-        )
-        layer_specs = self._layer_apply_specs (
-            update_ctx,
-            render_bundle,
-        )
         self._merge_apply_and_write_metadata (
             _scene_apply_metadata_request_t (
                 layer_adapter,
-                observation_layout,
-                measurement_area_geometry,
-                render_settings,
-                layer_specs,
+                prepared.observation_layout,
+                prepared.measurement_area_geometry,
+                prepared.render_settings,
+                full_result.layer_specs,
                 timings_ms,
             )
         )
@@ -581,7 +293,13 @@ class observation_overlay_build_flow_t:
                 self._status.value = str (info_result.error or self._status_messages.invalid_image_data ())
         return ephemeris_job if self._ephemeris_job_has_request (ephemeris_job) else None
 
-    def check_ephemeris_for_layer (self, *, layer_adapter) -> None:
+    def _build_full_result (
+        self,
+        request: full_build_request_t,
+    ) -> _full_build_result_t:
+        return self._full_builder ().build_result (request)
+
+    def check_ephemeris_for_layer (self, *, layer_adapter) -> bool:
         self._report_ephemeris_result (
             request = None,
             result = None,
@@ -594,7 +312,7 @@ class observation_overlay_build_flow_t:
                 request = None,
                 result = None,
             )
-            return
+            return False
         ephemeris_job = self._prepare_ephemeris_job_for_layer (
             context,
             headers,
@@ -605,12 +323,13 @@ class observation_overlay_build_flow_t:
                 request = None,
                 result = None,
             )
-            return
-        self.prime_ephemeris_job (
+            return False
+        resolution = self.prime_ephemeris_job (
             ephemeris_job,
             report_result = True,
             report_debug = True,
         )
+        return str (getattr (resolution, "status", "") or "") == "ok"
 
     def rebuild_measurement_overlays_for_layer (
         self,
@@ -632,33 +351,28 @@ class observation_overlay_build_flow_t:
 
         update_ctx = prepared.update_ctx
         measurement_area_geometry = prepared.measurement_area_geometry
-        image_shape = prepared.image_shape
-        placement_bounds_yx = prepared.placement_bounds_yx
-        viewport_context = update_ctx.viewport_context
-        data_per_screen_px_yx = self._prepared_data_per_screen_px_yx (prepared)
         render_settings = prepared.render_settings
         context = prepared.context
-        headers = prepared.headers
-        resolved_nominal_side_px = float (update_ctx.observation_layout.square_side_px)
-        measurement_overlay_request = measurement_overlay_request_t(
-            context,
-            headers,
+        measurement_request = measurement_request_t (
+            prepared.context,
+            prepared.headers,
             layer_adapter,
-            measurement_area_geometry,
-            image_shape,
-            placement_bounds_yx,
-            resolved_nominal_side_px,
-            render_settings,
+            prepared.measurement_area_geometry,
+            prepared.image_shape,
+            prepared.placement_bounds_yx,
+            prepared.nominal_side_px,
+            prepared.render_settings,
             timings_ms,
-            data_per_screen_px_yx = data_per_screen_px_yx,
-            viewport_context = viewport_context,
+            None,
+            True,
+            prepared.viewport_context,
         )
-        measurement_overlay = self._build_measurement_overlay_result(measurement_overlay_request)
-        measurement_scene = measurement_overlay.measurement_scene
-        measurement_text_scene = measurement_overlay.measurement_text_scene
-        processing_scene = measurement_overlay.processing_scene
+        measurement_result = self._measurement_builder ().build_result (measurement_request)
+        measurement_scene = measurement_result.measurement_scene
+        measurement_text_scene = measurement_result.measurement_text_scene
+        processing_scene = measurement_result.processing_scene
 
-        measurement_layer_apply_request = measurement_layer_apply_request_t(
+        measurement_layer_apply_request = measurement_apply_request_t(
             update_ctx,
             render_settings,
             measurement_scene,
@@ -709,30 +423,24 @@ class observation_overlay_build_flow_t:
 
         update_ctx = prepared.update_ctx
         measurement_area_geometry = prepared.measurement_area_geometry
-        image_shape = prepared.image_shape
-        placement_bounds_yx = prepared.placement_bounds_yx
-        viewport_context = update_ctx.viewport_context
-        data_per_screen_px_yx = self._prepared_data_per_screen_px_yx (prepared)
         render_settings = prepared.render_settings
         context = prepared.context
-        headers = prepared.headers
-        resolved_nominal_side_px = float (update_ctx.observation_layout.square_side_px)
-        measurement_overlay_request = measurement_overlay_request_t(
-            context,
-            headers,
+        measurement_request = measurement_request_t (
+            prepared.context,
+            prepared.headers,
             layer_adapter,
-            measurement_area_geometry,
-            image_shape,
-            placement_bounds_yx,
-            resolved_nominal_side_px,
-            render_settings,
+            prepared.measurement_area_geometry,
+            prepared.image_shape,
+            prepared.placement_bounds_yx,
+            prepared.nominal_side_px,
+            prepared.render_settings,
             timings_ms,
-            include_measurement_scene = False,
-            data_per_screen_px_yx = data_per_screen_px_yx,
-            viewport_context = viewport_context,
+            None,
+            False,
+            prepared.viewport_context,
         )
-        measurement_overlay = self._build_measurement_overlay_result(measurement_overlay_request)
-        processing_scene = measurement_overlay.processing_scene
+        measurement_result = self._measurement_builder ().build_result (measurement_request)
+        processing_scene = measurement_result.processing_scene
 
         layer_specs = self._author_layer_apply_specs (
             update_ctx,
@@ -784,77 +492,32 @@ class observation_overlay_build_flow_t:
             )
             return
 
-        update_ctx = prepared.update_ctx
         observation_layout = prepared.observation_layout
-        image_shape = prepared.image_shape
-        placement_bounds_yx = prepared.placement_bounds_yx
-        viewport_context = update_ctx.viewport_context
-        data_per_screen_px_yx = self._prepared_data_per_screen_px_yx (prepared)
         render_settings = prepared.render_settings
-        layout_specs_started_at = perf_counter ()
-        resolved_base_side_px = float (observation_layout.square_side_px)
-        hud_layout_for_block_request = hud_layout_for_block_request_t(
-            resolved_base_side_px,
-            image_shape,
-            placement_bounds_yx,
-            render_settings.compass_block,
-            data_per_screen_px_yx,
-            viewport_context = viewport_context,
-        )
-        compass_layout = self._hud_layout_for_block(hud_layout_for_block_request)
-        timings_ms ["layout_specs"] = self._elapsed_ms (layout_specs_started_at)
+        compass_layout = self._compass_layout_for_prepared_rebuild (prepared, timings_ms)
         context = prepared.context
-        headers = prepared.headers
-        compass_overlay_request = compass_overlay_request_t(
-            context,
-            headers,
-            layer_adapter,
-            image_shape,
-            compass_layout,
-            render_settings,
-            timings_ms,
-        )
-        compass_result = self._build_compass_overlay_result(compass_overlay_request)
-        resolved_nominal_side_px = float (observation_layout.square_side_px)
-        info_overlay_request = info_overlay_request_t(
-            headers,
-            compass_result.solution,
-            image_shape,
-            placement_bounds_yx,
-            resolved_nominal_side_px,
-            render_settings,
-            timings_ms,
-            data_per_screen_px_yx = data_per_screen_px_yx,
-            viewport_context = viewport_context,
-        )
-        info_result = self._build_info_overlay_result(info_overlay_request)
-        if not info_result.text:
-            resolved_error = self._status_messages.cannot_load_info_headers ()
-            info_result = _info_overlay_result_t (
-                info_result.scene,
-                info_result.text,
-                resolved_error,
+        compass_info_result = self._build_compass_info_result (
+            compass_info_build_request_t (
+                layer_adapter,
+                prepared,
+                compass_layout,
+                timings_ms,
             )
-
-        compass_info_layer_apply_request = compass_info_layer_apply_request_t(
-            update_ctx,
-            render_settings,
-            compass_result.scene,
-            info_result.scene,
         )
-        layer_specs = self._compass_info_layer_apply_specs(compass_info_layer_apply_request)
         apply_result = self._merge_apply_and_write_metadata (
             _scene_apply_metadata_request_t (
                 layer_adapter,
                 observation_layout,
-                update_ctx.measurement_area_geometry,
+                prepared.measurement_area_geometry,
                 render_settings,
-                layer_specs,
+                compass_info_result.layer_specs,
                 timings_ms,
-                compass_result,
+                compass_info_result.compass_result,
             )
         )
         main_scene = apply_result.merged_scene
+        compass_result = compass_info_result.compass_result
+        info_result = compass_info_result.info_result
         has_output = bool (
             main_scene.has_content ()
             or compass_result.scene is not None
@@ -864,9 +527,9 @@ class observation_overlay_build_flow_t:
             layer_name,
             timings_ms,
             total_started_at,
-            context_ready = context is not None,
-            has_solution = compass_result.solution is not None,
-            has_output = has_output,
+            context is not None,
+            compass_result.solution is not None,
+            has_output,
         )
 
         if not bool (update_status):
@@ -875,6 +538,12 @@ class observation_overlay_build_flow_t:
             compass_result,
             info_result,
         )
+
+    def _build_compass_info_result (
+        self,
+        request: compass_info_build_request_t,
+    ) -> _compass_info_result_t:
+        return self._compass_info_builder ().build_result (request)
 
     def _prepare_rebuild_context (
         self,
@@ -1008,169 +677,6 @@ class observation_overlay_build_flow_t:
             return None
         return str (object_name_override)
 
-    def _build_measurement_texts (
-        self,
-        context,
-        measurement_area_geometry,
-        target_distance_au,
-        source_metadata = None,
-        source_layer = None,
-        show_display_line: bool = True,
-    ) -> tuple [str, str]:
-        return self._metrics_builder.build_measurement_texts (
-            context,
-            measurement_area_geometry,
-            target_distance_au,
-            source_metadata,
-            source_layer,
-            show_display_line,
-        )
-
-    def _build_measurement_text_bundle (
-        self,
-        context,
-        measurement_area_geometry,
-        target_distance_au,
-        source_metadata = None,
-        source_layer = None,
-        show_display_line: bool = True,
-    ) -> _measurement_text_bundle_t:
-        size_text, processing_text = self._build_measurement_texts (
-            context,
-            measurement_area_geometry,
-            target_distance_au,
-            source_metadata,
-            source_layer,
-            show_display_line,
-        )
-        return _measurement_text_bundle_t (
-            size_text,
-            processing_text,
-        )
-
-    def _build_measurement_hud_text_blocks(self, request: measurement_hud_text_blocks_request_t) -> _measurement_hud_text_blocks_t:
-        hud_specs_started_at = perf_counter ()
-        measurement_size_text = (
-            request.measurement_texts.size_text
-            if bool (request.render_settings.measurement_text_block.visible)
-            else ""
-        )
-        author_processing_text = (
-            request.measurement_texts.processing_text
-            if bool (request.render_settings.author_block.visible)
-            else ""
-        )
-        measurement_text_size_yx = self._estimate_measurement_text_hud_size_yx_px (
-            size_text = measurement_size_text,
-            processing_text = "",
-            text_scale = self._block_layout_text_scale (request.render_settings.measurement_text_block),
-        )
-        author_text_size_yx = self._estimate_measurement_text_hud_size_yx_px (
-            size_text = "",
-            processing_text = author_processing_text,
-            text_scale = self._block_layout_text_scale (request.render_settings.author_block),
-        )
-        hud_spec_for_block_request = hud_spec_for_block_request_t(
-            request.image_shape,
-            request.placement_bounds_yx,
-            request.render_settings.measurement_text_block,
-            None,
-            request.data_per_screen_px_yx,
-            measurement_text_size_yx,
-            viewport_context = request.viewport_context,
-        )
-        measurement_text_hud_layout = self._hud_spec_for_block(hud_spec_for_block_request)
-        hud_spec_for_block_request = hud_spec_for_block_request_t(
-            request.image_shape,
-            request.placement_bounds_yx,
-            request.render_settings.author_block,
-            None,
-            request.data_per_screen_px_yx,
-            author_text_size_yx,
-            viewport_context = request.viewport_context,
-        )
-        author_hud_layout = self._hud_spec_for_block(hud_spec_for_block_request)
-        hud_specs_ms = self._elapsed_ms (hud_specs_started_at)
-        text_blocks_started_at = perf_counter ()
-        measurement_text_scene = self._overlay_scene_manager.build_measurement_size_component (
-            hud_layout = measurement_text_hud_layout,
-            size_text = measurement_size_text,
-        )
-        processing_scene = self._overlay_scene_manager.build_measurement_processing_component (
-            hud_layout = author_hud_layout,
-            size_text = "",
-            processing_text = author_processing_text,
-        )
-        text_blocks_ms = self._elapsed_ms (text_blocks_started_at)
-        return _measurement_hud_text_blocks_t (
-            measurement_text_hud_layout,
-            author_hud_layout,
-            measurement_text_scene,
-            processing_scene,
-            hud_specs_ms,
-            text_blocks_ms,
-        )
-
-    def _build_measurement_overlay_result(self, request: measurement_overlay_request_t) -> _measurement_overlay_result_t:
-        resolved_target_distance_au = request.target_distance_au
-        if request.target_distance_au is None and request.context is not None:
-            resolved_target_distance_au = request.context.target_distance_au
-        if request.context is not None and resolved_target_distance_au is None:
-            ephemeris_started_at = perf_counter ()
-            ephemeris = self._resolve_ephemeris_resolution_with_fallback (
-                request.context,
-                request.headers,
-                request.layer_adapter,
-            )
-            request.timings_ms ["ephemeris"] = self._elapsed_ms (ephemeris_started_at)
-            resolved_target_distance_au = ephemeris.target_distance_au
-        measurement_texts_started_at = perf_counter ()
-        measurement_texts = self._build_measurement_text_bundle (
-            request.context,
-            request.measurement_area_geometry,
-            resolved_target_distance_au,
-            self._layer_metadata_copy (request.layer_adapter),
-            getattr (request.layer_adapter, "layer", None),
-            bool (request.render_settings.show_display_line),
-        )
-        request.timings_ms ["measurement_texts"] = self._elapsed_ms (measurement_texts_started_at)
-        measurement_scene = self._overlay_scene_manager.combine_components ()
-        if bool (request.include_measurement_scene):
-            measurement_scene_started_at = perf_counter ()
-            measurement_scene = (
-                self._overlay_scene_manager.build_measurement_border_component (
-                    layout = request.measurement_area_geometry,
-                    line_width_scale = float (request.render_settings.measurement_area_weight_pct) / 100.0,
-                )
-                if bool (request.render_settings.measurement_area_visible)
-                else self._overlay_scene_manager.combine_components ()
-            )
-            request.timings_ms ["measurement_scene"] = self._elapsed_ms (measurement_scene_started_at)
-        resolved_nominal_side_px = float (request.nominal_side_px)
-        measurement_hud_text_blocks_request = measurement_hud_text_blocks_request_t(
-            request.image_shape,
-            request.placement_bounds_yx,
-            resolved_nominal_side_px,
-            request.render_settings,
-            measurement_texts,
-            request.measurement_area_geometry,
-            request.data_per_screen_px_yx,
-            viewport_context = request.viewport_context,
-        )
-        measurement_hud_text_blocks = self._build_measurement_hud_text_blocks(measurement_hud_text_blocks_request)
-        request.timings_ms ["hud_specs"] = measurement_hud_text_blocks.hud_specs_ms
-        request.timings_ms ["text_blocks"] = measurement_hud_text_blocks.text_blocks_ms
-        target_distance_au = resolved_target_distance_au
-        return _measurement_overlay_result_t (
-            target_distance_au,
-            measurement_texts,
-            measurement_scene,
-            measurement_hud_text_blocks.measurement_text_scene,
-            measurement_hud_text_blocks.processing_scene,
-            measurement_hud_text_blocks.hud_specs_ms,
-            measurement_hud_text_blocks.text_blocks_ms,
-        )
-
     def _prepare_ephemeris_job_for_layer (
         self,
         context,
@@ -1205,7 +711,7 @@ class observation_overlay_build_flow_t:
     def _write_direction_solution_metadata (
         self,
         layer_adapter,
-        compass_result: _compass_overlay_result_t,
+        compass_result: _compass_result_t,
     ) -> None:
         if compass_result.solution is None:
             return
@@ -1232,8 +738,8 @@ class observation_overlay_build_flow_t:
 
     def _update_full_rebuild_status (
         self,
-        compass_result: _compass_overlay_result_t,
-        info_result: _info_overlay_result_t,
+        compass_result: _compass_result_t,
+        info_result: _info_result_t,
     ) -> None:
         if compass_result.solution is not None:
             if self._is_geocenter_fallback_for_space (compass_result):
@@ -1255,7 +761,7 @@ class observation_overlay_build_flow_t:
 
     @staticmethod
     def _is_geocenter_fallback_for_space (
-        compass_result: _compass_overlay_result_t,
+        compass_result: _compass_result_t,
     ) -> bool:
         observer_mode = str (getattr (compass_result, "observer_mode", "") or "").strip ().lower ()
         used_attempt_tag = str (getattr (compass_result, "used_observer_attempt_tag", "") or "").strip ().lower ()
@@ -1263,7 +769,7 @@ class observation_overlay_build_flow_t:
             return False
         return used_attempt_tag == "loc=500"
 
-    def _build_info_overlay_result(self, request: info_overlay_request_t) -> _info_overlay_result_t:
+    def _build_info_result(self, request: info_request_t) -> _info_result_t:
         info_text_started_at = perf_counter ()
         info_text = ""
         if request.headers:
@@ -1278,9 +784,9 @@ class observation_overlay_build_flow_t:
             )
         request.timings_ms ["info_text"] = self._elapsed_ms (info_text_started_at)
         if not info_text:
-            return _info_overlay_result_t ()
+            return _info_result_t ()
         if not bool (request.render_settings.info_block.visible):
-            return _info_overlay_result_t (text = info_text)
+            return _info_result_t (text = info_text)
         info_scene_started_at = perf_counter ()
         info_text_size_yx = self._estimate_text_block_size_yx_px (
             info_text,
@@ -1292,9 +798,8 @@ class observation_overlay_build_flow_t:
             request.placement_bounds_yx,
             request.render_settings.info_block,
             None,
-            request.data_per_screen_px_yx,
             info_text_size_yx,
-            viewport_context = request.viewport_context,
+            request.viewport_context,
         )
         info_hud_layout = self._hud_spec_for_block(hud_spec_for_block_request)
         info_build = self._overlay_scene_manager.build_info_hud_component (
@@ -1303,16 +808,16 @@ class observation_overlay_build_flow_t:
         )
         info_scene = info_build.scene
         request.timings_ms ["info_scene"] = self._elapsed_ms (info_scene_started_at)
-        return _info_overlay_result_t (
+        return _info_result_t (
             info_scene,
             info_text,
         )
 
-    def _build_compass_overlay_result(self, request: compass_overlay_request_t) -> _compass_overlay_result_t:
+    def _build_compass_result(self, request: compass_request_t) -> _compass_result_t:
         target_distance_au = getattr (request.context, "target_distance_au", None) if request.context is not None else None
         if request.context is None:
             self._debug_reporter.report_compass_failure (reason = "no_context")
-            return _compass_overlay_result_t (
+            return _compass_result_t (
                 error = self._status_messages.cannot_resolve_wcs_time (),
                 target_distance_au = target_distance_au,
             )
@@ -1325,7 +830,7 @@ class observation_overlay_build_flow_t:
         request.timings_ms ["ephemeris"] = self._elapsed_ms (ephemeris_started_at)
         target_distance_au = ephemeris.target_distance_au
         if not bool (request.render_settings.compass_block.visible):
-            return _compass_overlay_result_t (target_distance_au = target_distance_au)
+            return _compass_result_t (target_distance_au = target_distance_au)
         compass_started_at = perf_counter ()
         group_build = self._overlay_scene_manager.build_compass_group_with_fit (
             wcs = request.context.wcs,
@@ -1336,8 +841,10 @@ class observation_overlay_build_flow_t:
             layout = request.compass_layout,
             target_distance_au = ephemeris.target_distance_au,
             target_heliocentric_distance_au = ephemeris.target_heliocentric_distance_au,
-            sun_pa_deg = ephemeris.sun_pa_deg,
-            earth_pa_deg = ephemeris.earth_pa_deg,
+            pa_overrides = compass_pa_overrides_t (
+                ephemeris.sun_pa_deg,
+                ephemeris.earth_pa_deg,
+            ),
             label_scale = self._block_layout_text_scale (request.render_settings.compass_block),
             arrow_weight_scale = self._pct_scale (getattr (request.render_settings, "compass_weight_pct", 100)),
         )
@@ -1361,7 +868,7 @@ class observation_overlay_build_flow_t:
             resolved_used_observer_attempt_tag = str (getattr (ephemeris, "used_observer_attempt_tag", "") or "")
             resolved_used_observer_location_id = str (getattr (ephemeris, "used_observer_location_id", "") or "")
             resolved_failed_observer_attempts = tuple (getattr (ephemeris, "failed_observer_attempts", ()) or ())
-            return _compass_overlay_result_t (
+            return _compass_result_t (
                 compass_scene,
                 group_build.solution,
                 resolved_observer_source,
@@ -1377,22 +884,9 @@ class observation_overlay_build_flow_t:
         else:
             error = self._status_messages.compass_solve_failed ()
         self._debug_reporter.report_compass_failure (reason = str (group_build.failure_reason))
-        return _compass_overlay_result_t (
+        return _compass_result_t (
             error = error,
             target_distance_au = target_distance_au,
-        )
-
-    def _build_info_metrics_text (
-        self,
-        *,
-        context,
-        measurement_area_geometry,
-        target_distance_au,
-    ) -> str:
-        return self._metrics_builder.build_info_metrics_text (
-            context,
-            measurement_area_geometry,
-            target_distance_au,
         )
 
     @staticmethod
@@ -1415,13 +909,13 @@ class observation_overlay_build_flow_t:
                 pass
         return {}
 
-    def _current_render_settings (self) -> observation_overlay_render_settings_t:
+    def _current_render_settings (self) -> render_contracts.settings_t:
         return self._render_spec_factory.current_render_settings ()
 
-    def _block_text_scale (self, block: observation_overlay_block_ui_state_t) -> float:
+    def _block_text_scale (self, block: panel_state.block_t) -> float:
         return self._render_spec_factory.block_text_scale (block)
 
-    def _block_layout_text_scale (self, block: observation_overlay_block_ui_state_t) -> float:
+    def _block_layout_text_scale (self, block: panel_state.block_t) -> float:
         return self._render_spec_factory.block_layout_text_scale (block)
 
     def _estimate_text_block_size_yx_px (
@@ -1442,13 +936,13 @@ class observation_overlay_build_flow_t:
                 estimated,
                 fallback = self._fallback_text_block_size_yx_px (
                     text,
-                    text_scale = text_scale,
+                    text_scale,
                     preserve_vertical_whitespace = bool (preserve_vertical_whitespace),
                 ),
             )
         return self._fallback_text_block_size_yx_px (
             text,
-            text_scale = text_scale,
+            text_scale,
             preserve_vertical_whitespace = bool (preserve_vertical_whitespace),
         )
 
@@ -1470,16 +964,16 @@ class observation_overlay_build_flow_t:
                 estimated,
                 fallback = self._fallback_text_block_size_yx_px (
                     f"{size_text}\n{processing_text}",
-                    text_scale = text_scale,
+                    text_scale,
                 ),
             )
         size_yx = self._fallback_text_block_size_yx_px (
             size_text,
-            text_scale = text_scale,
+            text_scale,
         )
         processing_yx = self._fallback_text_block_size_yx_px (
             processing_text,
-            text_scale = float (text_scale) * 0.85,
+            float (text_scale) * 0.85,
         )
         return (
             float (size_yx [0]) + float (processing_yx [0]),
@@ -1505,8 +999,8 @@ class observation_overlay_build_flow_t:
     @staticmethod
     def _fallback_text_block_size_yx_px (
         text: str,
-        *,
         text_scale: float,
+        *,
         preserve_vertical_whitespace: bool = False,
     ) -> tuple [float, float]:
         raw_text = str (text or "")
@@ -1539,33 +1033,35 @@ class observation_overlay_build_flow_t:
             block = request.block,
             image_shape = request.image_shape,
             visible_bounds_yx = request.visible_bounds_yx,
-            data_per_screen_px_yx = request.data_per_screen_px_yx,
             viewport_context = request.viewport_context,
         )
 
-    def _hud_spec_for_block(self, request: hud_spec_for_block_request_t) -> observation_overlay_hud_layout_spec_t:
+    def _compass_layout_for_prepared_rebuild (
+        self,
+        prepared: _prepared_rebuild_context_t,
+        timings_ms: dict [str, float],
+    ) -> scene_model.layout_t:
+        layout_specs_started_at = perf_counter ()
+        request = hud_layout_for_block_request_t (
+            prepared.nominal_side_px,
+            prepared.image_shape,
+            prepared.placement_bounds_yx,
+            prepared.render_settings.compass_block,
+            prepared.viewport_context,
+        )
+        compass_layout = self._hud_layout_for_block (request)
+        timings_ms ["layout_specs"] = self._elapsed_ms (layout_specs_started_at)
+        return compass_layout
+
+    def _hud_spec_for_block(self, request: hud_spec_for_block_request_t) -> render_contracts.hud_layout_spec_t:
         return self._render_spec_factory.hud_spec_for_block (
             block = request.block,
             image_shape = request.image_shape,
             visible_bounds_yx = request.visible_bounds_yx,
             nominal_side_px = request.nominal_side_px,
             nominal_size_yx = request.nominal_size_yx,
-            data_per_screen_px_yx = request.data_per_screen_px_yx,
             viewport_context = request.viewport_context,
         )
-
-    @staticmethod
-    def _prepared_data_per_screen_px_yx (
-        prepared: _prepared_rebuild_context_t,
-    ) -> tuple [float, float] | None:
-        viewport_context = getattr (getattr (prepared, "update_ctx", None), "viewport_context", None)
-        value = getattr (viewport_context, "data_per_screen_px_yx", None)
-        if isinstance (value, (tuple, list)) and len (value) >= 2:
-            try:
-                return (float (value [0]), float (value [1]))
-            except Exception:
-                return None
-        return None
 
     def _merge_apply_and_write_metadata (
         self,
@@ -1607,14 +1103,14 @@ class observation_overlay_build_flow_t:
     def _layer_apply_specs (
         self,
         update_ctx,
-        render_bundle: observation_overlay_render_bundle_t,
-    ) -> tuple [observation_overlay_layer_apply_spec_t, ...]:
+        render_bundle: render_contracts.bundle_t,
+    ) -> tuple [render_contracts.layer_apply_spec_t, ...]:
         return self._render_spec_factory.layer_apply_specs (
             update_ctx,
             render_bundle,
         )
 
-    def _measurement_layer_apply_specs(self, request: measurement_layer_apply_request_t):
+    def _measurement_layer_apply_specs(self, request: measurement_apply_request_t):
         return self._render_spec_factory.measurement_layer_apply_specs (
             update_ctx = request.update_ctx,
             render_settings = request.render_settings,
@@ -1626,7 +1122,7 @@ class observation_overlay_build_flow_t:
     def _author_layer_apply_specs (
         self,
         update_ctx,
-        render_settings: observation_overlay_render_settings_t,
+        render_settings: render_contracts.settings_t,
         processing_scene,
     ):
         return self._render_spec_factory.author_layer_apply_specs (
@@ -1635,7 +1131,7 @@ class observation_overlay_build_flow_t:
             processing_scene,
         )
 
-    def _compass_info_layer_apply_specs(self, request: compass_info_layer_apply_request_t):
+    def _compass_info_layer_apply_specs(self, request: compass_info_apply_request_t):
         return self._render_spec_factory.compass_info_layer_apply_specs (
             update_ctx = request.update_ctx,
             render_settings = request.render_settings,
@@ -1664,7 +1160,6 @@ class observation_overlay_build_flow_t:
         layer_name: str,
         timings_ms: dict [str, float],
         total_started_at: float,
-        *,
         context_ready: bool,
         has_solution: bool,
         has_output: bool,
@@ -1737,4 +1232,3 @@ class observation_overlay_build_flow_t:
     def _layer_name (layer_adapter) -> str:
         layer = getattr (layer_adapter, "layer", None)
         return str (getattr (layer, "name", "") or "")
-

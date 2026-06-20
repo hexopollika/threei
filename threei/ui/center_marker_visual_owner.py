@@ -22,8 +22,12 @@ def _quality_color(value) -> str:
 @dataclass(slots=True)
 class _center_marker_record_t:
     source_layer: Any
+    visual_layer: Any
     parent: Any
     nodes: list[Any]
+    visible_callback: Any | None = None
+    visible: bool = True
+    active_node_count: int = 0
 
 
 class center_marker_visual_owner_t:
@@ -39,6 +43,7 @@ class center_marker_visual_owner_t:
         *,
         source_layer,
         source_layer_key: str,
+        display_layer=None,
         record: layer_center_record_t | None,
         search_size_px: int,
         visible: bool,
@@ -46,11 +51,20 @@ class center_marker_visual_owner_t:
         key = str(source_layer_key or "")
         if not key:
             return False
-        if source_layer is None or record is None or not bool(visible):
+        if source_layer is None or record is None:
             self.hide_source(source_layer_key=key)
             return True
 
-        parent, transform = self._visual_parent_and_transform(source_layer)
+        visual_layer = display_layer if display_layer is not None else source_layer
+        if not bool(visible):
+            self._set_record_requested_visible(source_layer_key=key, visible=False)
+            self.hide_source(source_layer_key=key)
+            return True
+
+        parent, transform = self._visual_parent_and_transform(visual_layer)
+        if parent is None and visual_layer is not source_layer:
+            visual_layer = source_layer
+            parent, transform = self._visual_parent_and_transform(source_layer)
         if parent is None:
             self.hide_source(source_layer_key=key)
             self._warn_once("Vispy center marker is unavailable for the current source layer.")
@@ -58,44 +72,47 @@ class center_marker_visual_owner_t:
 
         try:
             marker_record = self._record_for(
-                source_layer_key=key,
-                source_layer=source_layer,
-                parent=parent,
+                key,
+                source_layer,
+                visual_layer,
+                parent,
             )
+            marker_record.visible = bool(visible)
             color = _quality_color(record.quality_label)
             shapes = self._marker_shapes_xy(
                 record.target_center_yx,
                 search_size_px,
             )
             widths = (2.0, 2.0, 1.5)
-            order = self._marker_order(parent=parent, source_layer=source_layer)
+            order = self._marker_order(parent, visual_layer)
             next_nodes = []
             for idx, pos in enumerate(shapes):
                 node = self._node_at(marker_record.nodes, idx)
                 if node is None:
                     node = self._create_line_node(
-                        pos=pos,
-                        color=color,
-                        width=widths[idx],
+                        pos,
+                        color,
+                        widths[idx],
                     )
                 else:
                     self._update_line_node(
-                        node=node,
-                        pos=pos,
-                        color=color,
-                        width=widths[idx],
+                        node,
+                        pos,
+                        color,
+                        widths[idx],
                     )
                 self._prepare_node(
                     node,
-                    parent=parent,
-                    transform=transform,
-                    order=order,
+                    parent,
+                    transform,
+                    order,
                 )
-                self._set_node_visible(node, self._layer_visible(source_layer))
                 next_nodes.append(node)
             stale_nodes = marker_record.nodes[len(next_nodes):]
             self._hide_nodes(stale_nodes)
             marker_record.nodes = next_nodes + list(stale_nodes)
+            marker_record.active_node_count = len(next_nodes)
+            self._sync_source_visibility(key)
         except Exception as exc:
             self.remove_source(source_layer_key=key)
             self._warn_once(f"Vispy center marker failed: {exc!r}")
@@ -106,12 +123,14 @@ class center_marker_visual_owner_t:
         record = self._records_by_source_key.get(str(source_layer_key or ""))
         if record is None:
             return
+        record.visible = False
         self._hide_nodes(record.nodes)
 
     def remove_source(self, *, source_layer_key: str) -> None:
         record = self._records_by_source_key.pop(str(source_layer_key or ""), None)
         if record is None:
             return
+        self._disconnect_visual_visibility(record)
         for node in record.nodes:
             self._detach_node(node)
 
@@ -124,9 +143,9 @@ class center_marker_visual_owner_t:
 
     def _record_for(
         self,
-        *,
         source_layer_key: str,
         source_layer,
+        visual_layer,
         parent,
     ) -> _center_marker_record_t:
         key = str(source_layer_key or "")
@@ -136,14 +155,77 @@ class center_marker_visual_owner_t:
             record = None
         if record is None:
             record = _center_marker_record_t(
-                source_layer=source_layer,
-                parent=parent,
+                source_layer,
+                visual_layer,
+                parent,
                 nodes=[],
+                visible_callback=self._connect_visual_visibility(
+                    key,
+                    visual_layer,
+                ),
             )
             self._records_by_source_key[key] = record
-        record.source_layer = source_layer
+        elif record.source_layer is not source_layer or record.visual_layer is not visual_layer:
+            self._disconnect_visual_visibility(record)
+            record.source_layer = source_layer
+            record.visual_layer = visual_layer
+            record.visible_callback = self._connect_visual_visibility(
+                key,
+                visual_layer,
+            )
+        else:
+            record.source_layer = source_layer
+            record.visual_layer = visual_layer
         record.parent = parent
         return record
+
+    def _set_record_requested_visible(self, *, source_layer_key: str, visible: bool) -> None:
+        record = self._records_by_source_key.get(str(source_layer_key or ""))
+        if record is not None:
+            record.visible = bool(visible)
+
+    def _connect_visual_visibility(
+        self,
+        source_layer_key: str,
+        visual_layer,
+    ):
+        events = getattr(visual_layer, "events", None)
+        visible_event = getattr(events, "visible", None)
+        connect = getattr(visible_event, "connect", None)
+        if not callable(connect):
+            return None
+
+        def _on_visible_changed(_event=None, *, key=str(source_layer_key)) -> None:
+            self._sync_source_visibility(key)
+
+        try:
+            connect(_on_visible_changed)
+            return _on_visible_changed
+        except Exception:
+            return None
+
+    def _disconnect_visual_visibility(self, record: _center_marker_record_t) -> None:
+        callback = record.visible_callback
+        if callback is None:
+            return
+        visible_event = getattr(getattr(record.visual_layer, "events", None), "visible", None)
+        disconnect = getattr(visible_event, "disconnect", None)
+        if callable(disconnect):
+            try:
+                disconnect(callback)
+            except Exception:
+                pass
+
+    def _sync_source_visibility(self, source_layer_key: str) -> None:
+        record = self._records_by_source_key.get(str(source_layer_key or ""))
+        if record is None:
+            return
+        visible = bool(record.visible) and self._layer_visible(record.visual_layer)
+        active_nodes = tuple(record.nodes[: record.active_node_count])
+        stale_nodes = tuple(record.nodes[record.active_node_count :])
+        for node in active_nodes:
+            self._set_node_visible(node, visible)
+        self._hide_nodes(stale_nodes)
 
     def _visual_parent_and_transform(self, source_layer) -> tuple[Any | None, Any | None]:
         if source_layer is None:
@@ -165,7 +247,7 @@ class center_marker_visual_owner_t:
                 return value
         return {}
 
-    def _marker_order(self, *, parent, source_layer) -> float:
+    def _marker_order(self, parent, source_layer) -> float:
         visual_node = self._visual_node_for_layer(self._layer_to_visual(), source_layer)
         try:
             if visual_node is not None and getattr(visual_node, "parent", None) is parent:
@@ -227,7 +309,7 @@ class center_marker_visual_owner_t:
         return (float(point[1]), float(point[0]))
 
     @staticmethod
-    def _create_line_node(*, pos: np.ndarray, color, width: float):
+    def _create_line_node(pos: np.ndarray, color, width: float):
         from vispy.scene.visuals import Line
 
         return Line(
@@ -240,7 +322,7 @@ class center_marker_visual_owner_t:
         )
 
     @staticmethod
-    def _update_line_node(*, node, pos: np.ndarray, color, width: float) -> None:
+    def _update_line_node(node, pos: np.ndarray, color, width: float) -> None:
         set_data = getattr(node, "set_data", None)
         if callable(set_data):
             set_data(
@@ -256,7 +338,7 @@ class center_marker_visual_owner_t:
         node.connect = "strip"
 
     @classmethod
-    def _prepare_node(cls, node, *, parent, transform, order: float) -> None:
+    def _prepare_node(cls, node, parent, transform, order: float) -> None:
         try:
             if getattr(node, "parent", None) is not parent:
                 node.parent = parent

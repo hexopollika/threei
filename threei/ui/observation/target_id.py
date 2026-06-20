@@ -11,7 +11,7 @@ try:
 except Exception:
     _target_id_widget_t = ComboBox
 
-from threei.observation.overlay.context_provider import observation_overlay_context_provider_t
+from threei.observation.overlay.context_provider import observation_context_provider_t
 from threei.observation.target_ephemeris_provider import (
     target_ephemeris_request_builder_t,
     target_ephemeris_request_t,
@@ -174,7 +174,7 @@ class observation_target_id_controller_t:
     def __init__ (
         self,
         *,
-        context_provider: observation_overlay_context_provider_t,
+        context_provider: observation_context_provider_t,
         request_builder: target_ephemeris_request_builder_t | None = None,
     ):
         self._context_provider = context_provider

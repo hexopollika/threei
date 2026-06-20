@@ -2,25 +2,22 @@
 # Licensed under the MIT License
 from __future__ import annotations
 
+import threei.observation.overlay.scene_model as scene_model
 from typing import Callable, Optional
 
 import numpy as np
 
-from threei.observation.overlay.models import (
-    observation_overlay_layout_t,
-    observation_overlay_scene_t,
-)
 from threei.observation.overlay.shapes import (
     append_shape_request_t,
     scene_item_request_t,
 )
 
 
-class observation_overlay_layout_geometry_t:
+class observation_layout_geometry_t:
     def __init__ (
         self,
         *,
-        create_empty_scene: Callable[[], observation_overlay_scene_t],
+        create_empty_scene: Callable[[], scene_model.scene_t],
         append_shape: Callable[..., None],
         style,
     ):
@@ -33,7 +30,7 @@ class observation_overlay_layout_geometry_t:
         center_yx: Optional[tuple [float, float]],
         image_shape: tuple [int, ...],
         square_side_px: float,
-    ) -> observation_overlay_layout_t:
+    ) -> scene_model.layout_t:
         side = max (8.0, float (square_side_px))
         center = self._normalize_center_yx (
             center_yx,
@@ -44,7 +41,7 @@ class observation_overlay_layout_geometry_t:
         corner_se_yx = (float (center [0]) + half, float (center [1]) + half)
         center_yx = center
         square_side_px = float (side)
-        return observation_overlay_layout_t (
+        return scene_model.layout_t (
             center_yx,
             square_side_px,
             corner_nw_yx,
@@ -56,7 +53,7 @@ class observation_overlay_layout_geometry_t:
         center_yx: Optional[tuple [float, float]],
         image_shape: tuple [int, ...],
         size_yx_px: tuple[float, float],
-    ) -> observation_overlay_layout_t:
+    ) -> scene_model.layout_t:
         height = max (8.0, float (size_yx_px [0]))
         width = max (8.0, float (size_yx_px [1]))
         center = self._normalize_center_yx (
@@ -67,7 +64,7 @@ class observation_overlay_layout_geometry_t:
         half_width = 0.5 * width
         corner_nw_yx = (float (center [0]) - half_height, float (center [1]) - half_width)
         corner_se_yx = (float (center [0]) + half_height, float (center [1]) + half_width)
-        return observation_overlay_layout_t (
+        return scene_model.layout_t (
             center,
             float (min (height, width)),
             corner_nw_yx,
@@ -76,9 +73,9 @@ class observation_overlay_layout_geometry_t:
 
     def build_border_component (
         self,
-        layout: observation_overlay_layout_t,
+        layout: scene_model.layout_t,
         component: str,
-    ) -> observation_overlay_scene_t:
+    ) -> scene_model.scene_t:
         top = float (layout.corner_nw_yx [0])
         left = float (layout.corner_nw_yx [1])
         bottom = float (layout.corner_se_yx [0])

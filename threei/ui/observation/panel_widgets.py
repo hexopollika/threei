@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from magicgui.widgets import ComboBox, Label, PushButton
@@ -26,6 +26,12 @@ except Exception:
     _numeric_widget_t = _square_side_widget_t
 
 from threei.ui.observation.font_manager import observation_font_manager_t
+from threei.ui.observation.panel_defaults import (
+    observation_panel_block_defaults_t,
+    observation_panel_defaults_t,
+    panel_defaults_request_t,
+    resolve_panel_defaults as _resolve_panel_defaults,
+)
 from threei.ui.observation.panel_sections.author_section import (
     create_fallback_author_rows,
     create_qt_author_section,
@@ -60,44 +66,7 @@ from threei.ui.observation.panel_sections.target_section import (
 
 
 @dataclass(slots=True)
-class observation_overlay_panel_block_defaults_t:
-    visible: bool = True
-    anchor: str = "top_left"
-    scale_pct: int = 100
-    offset_x: int = 0
-    offset_y: int = 0
-
-
-@dataclass(slots=True)
-class observation_overlay_panel_defaults_t:
-    square_side_px: int
-    measurement_square_side_px: int
-    font_family: str
-    author: str = ""
-    show_display_line: bool = True
-    text_scale_pct: int = 100
-    compass_scale_pct: int = 100
-    compass_weight_pct: int = 100
-    measurement_area_width_px: int | None = None
-    measurement_area_height_px: int | None = None
-    measurement_area_visible: bool = True
-    measurement_area_weight_pct: int = 100
-    measurement_text: observation_overlay_panel_block_defaults_t = field(
-        default_factory=observation_overlay_panel_block_defaults_t
-    )
-    compass: observation_overlay_panel_block_defaults_t = field(
-        default_factory=observation_overlay_panel_block_defaults_t
-    )
-    info: observation_overlay_panel_block_defaults_t = field(
-        default_factory=observation_overlay_panel_block_defaults_t
-    )
-    author_block: observation_overlay_panel_block_defaults_t = field(
-        default_factory=observation_overlay_panel_block_defaults_t
-    )
-
-
-@dataclass(slots=True)
-class observation_overlay_block_widgets_t:
+class observation_block_widgets_t:
     visible_widget: Any
     anchor_widget: Any
     scale_widget: Any
@@ -108,9 +77,9 @@ class observation_overlay_block_widgets_t:
 
 
 @dataclass(slots=True)
-class observation_overlay_panel_layout_widgets_t:
+class observation_panel_layout_widgets_t:
     overlay_button: Any
-    reset_overlay_button: Any
+    disable_overlay_button: Any
     square_side_widget: Any
     text_scale_widget: Any
     compass_scale_widget: Any
@@ -122,20 +91,20 @@ class observation_overlay_panel_layout_widgets_t:
     measurement_area_height_widget: Any
     measurement_area_weight_widget: Any
     measurement_area_move_button: Any
-    measurement_text_block_widgets: observation_overlay_block_widgets_t
-    compass_block_widgets: observation_overlay_block_widgets_t
-    info_block_widgets: observation_overlay_block_widgets_t
-    author_block_widgets: observation_overlay_block_widgets_t
+    measurement_text_block_widgets: observation_block_widgets_t
+    compass_block_widgets: observation_block_widgets_t
+    info_block_widgets: observation_block_widgets_t
+    author_block_widgets: observation_block_widgets_t
     author_widget: Any
     show_display_line_widget: Any
     status: Any
 
 
 @dataclass(slots=True)
-class observation_overlay_panel_widgets_t:
+class observation_panel_widgets_t:
     panel: Any
     overlay_button: PushButton
-    reset_overlay_button: PushButton
+    disable_overlay_button: PushButton
     target_id_row: Any
     target_id_widget: Any
     target_id_check_button: PushButton
@@ -150,10 +119,10 @@ class observation_overlay_panel_widgets_t:
     measurement_area_visible_widget: Any
     measurement_area_weight_widget: Any
     measurement_area_move_button: Any
-    measurement_text_block_widgets: observation_overlay_block_widgets_t
-    compass_block_widgets: observation_overlay_block_widgets_t
-    info_block_widgets: observation_overlay_block_widgets_t
-    author_block_widgets: observation_overlay_block_widgets_t
+    measurement_text_block_widgets: observation_block_widgets_t
+    compass_block_widgets: observation_block_widgets_t
+    info_block_widgets: observation_block_widgets_t
+    author_block_widgets: observation_block_widgets_t
     font_widget: Any
     author_widget: Any
     show_display_line_widget: Any
@@ -163,7 +132,7 @@ class observation_overlay_panel_widgets_t:
     def create(
         cls,
         *,
-        defaults: observation_overlay_panel_defaults_t | None = None,
+        defaults: observation_panel_defaults_t | None = None,
         font_choices: tuple[str, ...],
         target_id_widgets: observation_target_id_panel_widgets_t,
         default_square_side: int | None = None,
@@ -171,19 +140,20 @@ class observation_overlay_panel_widgets_t:
         default_font_family: str | None = None,
         default_measurement_area_weight: int = 100,
         default_author: str = "",
-        measurement_text_defaults: observation_overlay_panel_block_defaults_t | None = None,
-        compass_defaults: observation_overlay_panel_block_defaults_t | None = None,
-        info_defaults: observation_overlay_panel_block_defaults_t | None = None,
-        author_defaults: observation_overlay_panel_block_defaults_t | None = None,
+        measurement_text_defaults: observation_panel_block_defaults_t | None = None,
+        compass_defaults: observation_panel_block_defaults_t | None = None,
+        info_defaults: observation_panel_block_defaults_t | None = None,
+        author_defaults: observation_panel_block_defaults_t | None = None,
         default_measurement_area_visible: bool = True,
         default_show_display_line: bool = True,
-    ) -> "observation_overlay_panel_widgets_t":
-        overlay_button = PushButton(text="Build Overlay")
+    ) -> "observation_panel_widgets_t":
+        overlay_button = PushButton(text="Enable")
         _configure_wide_button(overlay_button, min_width_px=220)
-        reset_overlay_button = PushButton(text="Reset Overlay")
-        _configure_wide_button(reset_overlay_button, min_width_px=220)
+        disable_overlay_button = PushButton(text="Disable")
+        _configure_wide_button(disable_overlay_button, min_width_px=220)
         try:
-            reset_overlay_button.tooltip = "Remove observation overlay and saved observation state from the active layer."
+            overlay_button.tooltip = "Show observation overlay for the active layer."
+            disable_overlay_button.tooltip = "Hide observation overlay for the active layer."
         except Exception:
             pass
 
@@ -205,23 +175,23 @@ class observation_overlay_panel_widgets_t:
 
         measurement_text_defaults_value = (
             defaults_value.measurement_text
-            if isinstance(defaults_value.measurement_text, observation_overlay_panel_block_defaults_t)
-            else observation_overlay_panel_block_defaults_t(anchor="top_right")
+            if isinstance(defaults_value.measurement_text, observation_panel_block_defaults_t)
+            else observation_panel_block_defaults_t(anchor="top_right")
         )
         compass_defaults_value = (
             defaults_value.compass
-            if isinstance(defaults_value.compass, observation_overlay_panel_block_defaults_t)
-            else observation_overlay_panel_block_defaults_t(anchor="top_left")
+            if isinstance(defaults_value.compass, observation_panel_block_defaults_t)
+            else observation_panel_block_defaults_t(anchor="top_left")
         )
         info_defaults_value = (
             defaults_value.info
-            if isinstance(defaults_value.info, observation_overlay_panel_block_defaults_t)
-            else observation_overlay_panel_block_defaults_t(anchor="bottom_left")
+            if isinstance(defaults_value.info, observation_panel_block_defaults_t)
+            else observation_panel_block_defaults_t(anchor="bottom_left")
         )
         author_defaults_value = (
             defaults_value.author_block
-            if isinstance(defaults_value.author_block, observation_overlay_panel_block_defaults_t)
-            else observation_overlay_panel_block_defaults_t(anchor="bottom_right")
+            if isinstance(defaults_value.author_block, observation_panel_block_defaults_t)
+            else observation_panel_block_defaults_t(anchor="bottom_right")
         )
 
         square_side_widget = _square_side_widget_t(
@@ -343,9 +313,9 @@ class observation_overlay_panel_widgets_t:
         status = Label(value=observation_status_messages_t.select_fits_layer())
         _configure_status_label(status)
 
-        panel_layout_widgets = observation_overlay_panel_layout_widgets_t(
+        panel_layout_widgets = observation_panel_layout_widgets_t(
             overlay_button,
-            reset_overlay_button,
+            disable_overlay_button,
             square_side_widget,
             text_scale_widget,
             compass_scale_widget,
@@ -370,7 +340,7 @@ class observation_overlay_panel_widgets_t:
         return cls(
             panel=panel,
             overlay_button=overlay_button,
-            reset_overlay_button=reset_overlay_button,
+            disable_overlay_button=disable_overlay_button,
             target_id_row=target_id_widgets.target_id_row,
             target_id_widget=target_id_widgets.target_id_widget,
             target_id_check_button=target_id_widgets.check_button,
@@ -398,11 +368,11 @@ class observation_overlay_panel_widgets_t:
 
 def _create_panel(
     *,
-    layout_widgets: observation_overlay_panel_layout_widgets_t,
+    layout_widgets: observation_panel_layout_widgets_t,
 ) -> Any:
     if can_use_qt_layout(
         layout_widgets.overlay_button,
-        layout_widgets.reset_overlay_button,
+        layout_widgets.disable_overlay_button,
         layout_widgets.square_side_widget,
         layout_widgets.text_scale_widget,
         layout_widgets.compass_scale_widget,
@@ -436,7 +406,7 @@ def _create_panel(
 
 
 def _create_qt_panel(
-    layout_widgets: observation_overlay_panel_layout_widgets_t,
+    layout_widgets: observation_panel_layout_widgets_t,
 ) -> Any:
     from qtpy.QtWidgets import QVBoxLayout, QWidget
 
@@ -451,7 +421,7 @@ def _create_qt_panel(
     root.addWidget(
         create_qt_build_section(
             overlay_button=layout_widgets.overlay_button,
-            reset_overlay_button=layout_widgets.reset_overlay_button,
+            disable_overlay_button=layout_widgets.disable_overlay_button,
             layout_side_widget=layout_widgets.square_side_widget,
             font_widget=layout_widgets.font_widget,
             text_scale_widget=layout_widgets.text_scale_widget,
@@ -509,13 +479,13 @@ def _create_qt_panel(
 
 
 def _create_fallback_panel_rows(
-    layout_widgets: observation_overlay_panel_layout_widgets_t,
+    layout_widgets: observation_panel_layout_widgets_t,
 ) -> Any:
     rows: list[Any] = []
     rows.extend(
         create_fallback_build_rows(
             overlay_button=layout_widgets.overlay_button,
-            reset_overlay_button=layout_widgets.reset_overlay_button,
+            disable_overlay_button=layout_widgets.disable_overlay_button,
             layout_side_widget=layout_widgets.square_side_widget,
             font_widget=layout_widgets.font_widget,
             text_scale_widget=layout_widgets.text_scale_widget,
@@ -571,85 +541,11 @@ def _create_fallback_panel_rows(
     return create_fallback_panel(rows)
 
 
-@dataclass(frozen=True, slots=True)
-class panel_defaults_request_t:
-    defaults: observation_overlay_panel_defaults_t | None
-    default_square_side: int | None
-    default_measurement_square_side: int | None
-    default_font_family: str | None
-    default_measurement_area_weight: int
-    default_author: str
-    measurement_text_defaults: observation_overlay_panel_block_defaults_t | None
-    compass_defaults: observation_overlay_panel_block_defaults_t | None
-    info_defaults: observation_overlay_panel_block_defaults_t | None
-    author_defaults: observation_overlay_panel_block_defaults_t | None
-    default_measurement_area_visible: bool
-    default_show_display_line: bool
-
-
-
-def _resolve_panel_defaults(request: panel_defaults_request_t) -> observation_overlay_panel_defaults_t:
-    if isinstance(request.defaults, observation_overlay_panel_defaults_t):
-        return request.defaults
-    return observation_overlay_panel_defaults_t(
-        square_side_px=int(request.default_square_side if request.default_square_side is not None else 256),
-        measurement_square_side_px=int(
-            request.default_measurement_square_side
-            if request.default_measurement_square_side is not None
-            else (request.default_square_side if request.default_square_side is not None else 256)
-        ),
-        font_family=str(request.default_font_family or observation_font_manager_t.DEFAULT_FAMILY),
-        author=str(request.default_author or ""),
-        show_display_line=bool(request.default_show_display_line),
-        text_scale_pct=int(getattr(request.defaults, "text_scale_pct", 100) if request.defaults is not None else 100),
-        compass_scale_pct=int(getattr(request.defaults, "compass_scale_pct", 100) if request.defaults is not None else 100),
-        compass_weight_pct=int(getattr(request.defaults, "compass_weight_pct", 100) if request.defaults is not None else 100),
-        measurement_area_width_px=(
-            getattr(request.defaults, "measurement_area_width_px", None)
-            if request.defaults is not None
-            else None
-        ),
-        measurement_area_height_px=(
-            getattr(request.defaults, "measurement_area_height_px", None)
-            if request.defaults is not None
-            else None
-        ),
-        measurement_area_visible=bool(request.default_measurement_area_visible),
-        measurement_area_weight_pct=int(request.default_measurement_area_weight),
-        measurement_text=_coerce_block_defaults(
-            defaults=request.measurement_text_defaults,
-            fallback_anchor="top_right",
-        ),
-        compass=_coerce_block_defaults(
-            defaults=request.compass_defaults,
-            fallback_anchor="top_left",
-        ),
-        info=_coerce_block_defaults(
-            defaults=request.info_defaults,
-            fallback_anchor="bottom_left",
-        ),
-        author_block=_coerce_block_defaults(
-            defaults=request.author_defaults,
-            fallback_anchor="bottom_right",
-        ),
-    )
-
-
-def _coerce_block_defaults(
-    *,
-    defaults: observation_overlay_panel_block_defaults_t | None,
-    fallback_anchor: str,
-) -> observation_overlay_panel_block_defaults_t:
-    if isinstance(defaults, observation_overlay_panel_block_defaults_t):
-        return defaults
-    return observation_overlay_panel_block_defaults_t(anchor=str(fallback_anchor))
-
-
 def _create_block_widgets(
     *,
-    default_state: observation_overlay_panel_block_defaults_t,
-) -> observation_overlay_block_widgets_t:
-    return observation_overlay_block_widgets_t(
+    default_state: observation_panel_block_defaults_t,
+) -> observation_block_widgets_t:
+    return observation_block_widgets_t(
         visible_widget=_create_visibility_widget(
             label="",
             value=bool(default_state.visible),
@@ -727,10 +623,10 @@ def _create_int_widget(*, label: str, min_value: int, max_value: int, value: int
 def _create_measurement_area_size_widget(*, value: int):
     widget = _measurement_area_size_widget_t(
         label="",
-        min=32,
+        min=1,
         max=65536,
         value=int(value),
-        step=4,
+        step=1,
     )
     _configure_expanding_widget(widget, min_width_px=160)
     return widget

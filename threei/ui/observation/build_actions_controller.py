@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Callable, Protocol
 
-from threei.observation.overlay.debug import observation_overlay_debug_reporter_t
+from threei.observation.overlay.debug import observation_debug_reporter_t
 from threei.processing.compute_manager import compute_manager_t
 from threei.ui.layers import image_layer_adapter_t
 
@@ -23,7 +23,7 @@ class _build_flow_like_t (Protocol):
         self,
         *,
         layer_adapter: image_layer_adapter_t,
-    ) -> None: ...
+    ) -> bool: ...
 
 
 @dataclass (slots = True, frozen = True)
@@ -37,7 +37,7 @@ class _astroquery_warmup_result_t:
     resolve_ms: float
 
 
-class observation_overlay_build_actions_controller_t:
+class observation_build_actions_controller_t:
     def __init__ (
         self,
         *,
@@ -49,9 +49,10 @@ class observation_overlay_build_actions_controller_t:
         remember_active_layer_ui_state: Callable[[], None],
         remember_layer_ui_state: Callable[..., None],
         sync_ui_state_from_widgets: Callable[[], None] | None = None,
+        overlay_enabled_getter: Callable[[], bool] | None = None,
         ensure_build_flow: Callable[[], _build_flow_like_t | None],
         compute_manager: compute_manager_t | None = None,
-        debug_reporter: observation_overlay_debug_reporter_t | None = None,
+        debug_reporter: observation_debug_reporter_t | None = None,
     ):
         self._status_widget = status_widget
         self._status_messages = status_messages
@@ -73,12 +74,13 @@ class observation_overlay_build_actions_controller_t:
             if callable (sync_ui_state_from_widgets)
             else (lambda: None)
         )
+        self._overlay_enabled_getter = overlay_enabled_getter if callable (overlay_enabled_getter) else (lambda: False)
         self._ensure_build_flow = ensure_build_flow if callable (ensure_build_flow) else (lambda: None)
         self._compute_manager = compute_manager if isinstance (compute_manager, compute_manager_t) else compute_manager_t (max_workers = 1)
         self._debug_reporter = (
             debug_reporter
-            if isinstance (debug_reporter, observation_overlay_debug_reporter_t)
-            else observation_overlay_debug_reporter_t ()
+            if isinstance (debug_reporter, observation_debug_reporter_t)
+            else observation_debug_reporter_t ()
         )
         self._cleanup_done = False
         self._astroquery_warmup_started = False
@@ -152,7 +154,13 @@ class observation_overlay_build_actions_controller_t:
         build_flow = self._ensure_build_flow ()
         if build_flow is None:
             return
-        build_flow.check_ephemeris_for_layer (layer_adapter = layer_adapter)
+        target_found = bool (build_flow.check_ephemeris_for_layer (layer_adapter = layer_adapter))
+        if not target_found or not bool (self._overlay_enabled_getter ()):
+            return
+        self.rebuild_compass_info_overlays_for_layer (
+            layer_adapter,
+            update_status = True,
+        )
 
     def rebuild_overlay_for_layer (
         self,

@@ -4,7 +4,13 @@ from time import perf_counter
 from napari.layers import Image, Layer, Points, Shapes
 import numpy as np
 
-from threei.analysis.center import layer_center_record_t
+from threei.analysis.center import (
+    TARGET_CENTER_CORE_FIT_OK_KEY,
+    TARGET_CENTER_CORE_FIT_SCORE_KEY,
+    TARGET_CENTER_CORE_FWHM_PX_KEY,
+    TARGET_CENTER_CORE_SIGMA_PX_KEY,
+    layer_center_record_t,
+)
 from threei.ui.layers.layer_transform import (
     copy_image_transform,
     image_transform_kwargs,
@@ -234,6 +240,13 @@ class image_layer_adapter_t(layer_adapter_t):
         if self._image_layer() is None or not isinstance(record, layer_center_record_t):
             return None
         md = self.ensure_metadata()
+        for key in (
+            TARGET_CENTER_CORE_FIT_OK_KEY,
+            TARGET_CENTER_CORE_FIT_SCORE_KEY,
+            TARGET_CENTER_CORE_FWHM_PX_KEY,
+            TARGET_CENTER_CORE_SIGMA_PX_KEY,
+        ):
+            md.pop(key, None)
         md.update(record.to_metadata())
         return record
 
@@ -387,7 +400,7 @@ class image_layer_adapter_t(layer_adapter_t):
         previous_preview_source_layer_key="",
         contrast_limits=None,
     ):
-        if mode == "preview" and preview_window is not None:
+        if str(mode) in {"preview", "roi"} and preview_window is not None:
             layer = self._image_layer()
             if layer is None:
                 return False

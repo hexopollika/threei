@@ -2,16 +2,13 @@
 # Licensed under the MIT License
 from __future__ import annotations
 
+import threei.observation.overlay.scene_model as scene_model
 from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Protocol, cast
 
-from threei.observation.overlay.models import (
-    observation_overlay_layer_apply_spec_t,
-    observation_overlay_preview_request_t,
-    observation_overlay_preview_result_t,
-    observation_overlay_scene_t,
-)
+import threei.observation.overlay.preview_contracts as preview_contracts
+import threei.observation.overlay.render_contracts as render_contracts
 from threei.ui.observation.preview_visual_owner import observation_preview_visual_owner_t
 from threei.ui.observation.runtime_store import observation_runtime_store_t
 from threei.ui.observation.scene_visual_owner import observation_scene_visual_owner_t
@@ -21,16 +18,16 @@ class _preview_visual_owner_protocol_t (Protocol):
     def apply (
         self,
         *,
-        spec: observation_overlay_layer_apply_spec_t,
-        scene: observation_overlay_scene_t,
+        spec: render_contracts.layer_apply_spec_t,
+        scene: scene_model.scene_t,
     ) -> bool:
         ...
 
     def prepare (
         self,
         *,
-        spec: observation_overlay_layer_apply_spec_t,
-        scene: observation_overlay_scene_t,
+        spec: render_contracts.layer_apply_spec_t,
+        scene: scene_model.scene_t,
     ) -> bool:
         ...
 
@@ -56,8 +53,8 @@ class _scene_visual_owner_protocol_t (Protocol):
     def apply (
         self,
         *,
-        spec: observation_overlay_layer_apply_spec_t,
-        scene: observation_overlay_scene_t,
+        spec: render_contracts.layer_apply_spec_t,
+        scene: scene_model.scene_t,
     ) -> bool:
         ...
 
@@ -73,20 +70,20 @@ class _scene_visual_owner_protocol_t (Protocol):
 
 
 @dataclass (slots = True, frozen = True)
-class observation_overlay_display_apply_result_t:
-    scene: observation_overlay_scene_t
+class observation_display_apply_result_t:
+    scene: scene_model.scene_t
     timings_ms: tuple [tuple [str, float], ...] = ()
     applied_immediately: bool = False
 
 
 @dataclass (slots = True, frozen = True)
 class _observation_preview_session_t:
-    request: observation_overlay_preview_request_t
+    request: preview_contracts.request_t
     visual_active: bool = False
     last_delta_yx: tuple [float, float] = (0.0, 0.0)
 
 
-class observation_overlay_display_owner_t:
+class observation_display_owner_t:
     """Lifecycle boundary for materializing observation overlay scenes in napari."""
 
     def __init__ (
@@ -120,20 +117,20 @@ class observation_overlay_display_owner_t:
     def merge_and_apply (
         self,
         *,
-        layer_specs: tuple [observation_overlay_layer_apply_spec_t, ...],
-    ) -> observation_overlay_display_apply_result_t:
+        layer_specs: tuple [render_contracts.layer_apply_spec_t, ...],
+    ) -> observation_display_apply_result_t:
         resolved_specs = tuple (
             spec
             for spec in tuple (layer_specs)
-            if isinstance (spec, observation_overlay_layer_apply_spec_t)
+            if isinstance (spec, render_contracts.layer_apply_spec_t)
         )
         if len (resolved_specs) <= 0:
-            return observation_overlay_display_apply_result_t (
-                observation_overlay_scene_t.empty (),
+            return observation_display_apply_result_t (
+                scene_model.scene_t.empty (),
             )
 
         timings_ms: list [tuple [str, float]] = []
-        merged_scene = observation_overlay_scene_t.empty ()
+        merged_scene = scene_model.scene_t.empty ()
         applied_immediately = False
         for idx, spec in enumerate (resolved_specs):
             layer_scene = self._merge_single_layer (
@@ -149,14 +146,14 @@ class observation_overlay_display_owner_t:
                     layer_scene,
                 )
             action = self._materialize_layer (
-                spec = spec,
-                merged_scene = layer_scene,
-                layer_index = idx,
-                timings_ms = timings_ms,
+                spec,
+                layer_scene,
+                idx,
+                timings_ms,
             )
             applied_immediately = bool (applied_immediately or action == "applied")
 
-        return observation_overlay_display_apply_result_t (
+        return observation_display_apply_result_t (
             merged_scene,
             tuple (timings_ms),
             applied_immediately,
@@ -164,18 +161,18 @@ class observation_overlay_display_owner_t:
 
     def apply_preview (
         self,
-        request: observation_overlay_preview_request_t,
-    ) -> observation_overlay_preview_result_t:
-        if not isinstance (request, observation_overlay_preview_request_t):
-            return observation_overlay_preview_result_t.empty (
+        request: preview_contracts.request_t,
+    ) -> preview_contracts.result_t:
+        if not isinstance (request, preview_contracts.request_t):
+            return preview_contracts.result_t.empty (
                 reason = "invalid_request",
             )
         translated_scene = self._overlay_scene_manager.translate_scene (
             request.component_scene,
             request.delta_yx,
         )
-        spec = observation_overlay_layer_apply_spec_t (
-            base_scene = request.base_scene,
+        spec = render_contracts.layer_apply_spec_t (
+            request.base_scene,
             replace_components = tuple (request.replace_components),
             added_scene = translated_scene,
             layout_side_px = float (request.layout_side_px),
@@ -190,13 +187,13 @@ class observation_overlay_display_owner_t:
         )
         timings_ms: list [tuple [str, float]] = []
         applied = self._apply_preview_scene (
-            spec = spec,
-            scene = merged_scene,
-            source_layer_key = str (request.source_layer_key or ""),
-            timings_ms = timings_ms,
+            spec,
+            merged_scene,
+            str (request.source_layer_key or ""),
+            timings_ms,
         )
-        return observation_overlay_preview_result_t (
-            scene = merged_scene,
+        return preview_contracts.result_t (
+            merged_scene,
             timings_ms = tuple (timings_ms),
             applied = bool (applied),
             fallback_used = False,
@@ -205,11 +202,11 @@ class observation_overlay_display_owner_t:
 
     def begin_preview (
         self,
-        request: observation_overlay_preview_request_t,
-    ) -> observation_overlay_preview_result_t:
-        if not isinstance (request, observation_overlay_preview_request_t):
+        request: preview_contracts.request_t,
+    ) -> preview_contracts.result_t:
+        if not isinstance (request, preview_contracts.request_t):
             self._preview_session = None
-            return observation_overlay_preview_result_t.empty (
+            return preview_contracts.result_t.empty (
                 reason = "invalid_request",
             )
         normalized_request = self._preview_request_with_delta (
@@ -222,23 +219,23 @@ class observation_overlay_display_owner_t:
             normalized_request.delta_yx,
         )
         visual_applied = bool (self._apply_preview_visual (
-            request = normalized_request,
-            scene = translated_scene,
+            normalized_request,
+            translated_scene,
         ))
         self._preview_session = _observation_preview_session_t (
-            request = normalized_request,
+            normalized_request,
             visual_active = bool (visual_applied),
             last_delta_yx = normalized_delta_yx,
         )
         if not visual_applied:
-            return observation_overlay_preview_result_t (
-                scene = observation_overlay_scene_t.empty (),
+            return preview_contracts.result_t (
+                scene = scene_model.scene_t.empty (),
                 applied = False,
                 fallback_used = False,
                 reason = "visual_unavailable_not_applied",
             )
-        return observation_overlay_preview_result_t (
-            scene = translated_scene,
+        return preview_contracts.result_t (
+            translated_scene,
             applied = True,
             fallback_used = False,
             reason = "visual_preview",
@@ -247,10 +244,10 @@ class observation_overlay_display_owner_t:
     def update_preview (
         self,
         delta_yx: tuple [float, float],
-    ) -> observation_overlay_preview_result_t:
+    ) -> preview_contracts.result_t:
         session = self._preview_session
         if session is None:
-            return observation_overlay_preview_result_t.empty (
+            return preview_contracts.result_t.empty (
                 reason = "no_session",
             )
         request = self._preview_request_with_delta (
@@ -263,28 +260,28 @@ class observation_overlay_display_owner_t:
             request.delta_yx,
         )
         self._preview_session = _observation_preview_session_t (
-            request = session.request,
+            session.request,
             visual_active = bool (session.visual_active),
             last_delta_yx = normalized_delta_yx,
         )
         if bool (session.visual_active) and self._apply_preview_visual (
-            request = request,
-            scene = translated_scene,
+            request,
+            translated_scene,
         ):
-            return observation_overlay_preview_result_t (
-                scene = translated_scene,
+            return preview_contracts.result_t (
+                translated_scene,
                 applied = True,
                 fallback_used = False,
                 reason = "visual_preview",
             )
         self._hide_preview_visual (request)
         self._preview_session = _observation_preview_session_t (
-            request = session.request,
+            session.request,
             visual_active = False,
             last_delta_yx = normalized_delta_yx,
         )
-        return observation_overlay_preview_result_t (
-            scene = translated_scene,
+        return preview_contracts.result_t (
+            translated_scene,
             applied = False,
             fallback_used = False,
             reason = "visual_update_not_applied",
@@ -294,21 +291,21 @@ class observation_overlay_display_owner_t:
         self,
         *,
         commit: bool = True,
-    ) -> observation_overlay_preview_result_t:
+    ) -> preview_contracts.result_t:
         session = self._preview_session
         self._preview_session = None
         if session is None:
-            return observation_overlay_preview_result_t.empty (
+            return preview_contracts.result_t.empty (
                 reason = "no_session",
             )
         if bool (commit):
             self._hide_preview_visual (session.request)
-            return observation_overlay_preview_result_t.empty (
+            return preview_contracts.result_t.empty (
                 reason = "committed",
             )
         self._hide_preview_visual (session.request)
-        return observation_overlay_preview_result_t (
-            scene = session.request.base_scene,
+        return preview_contracts.result_t (
+            session.request.base_scene,
             applied = True,
             fallback_used = False,
             reason = "hidden",
@@ -316,9 +313,9 @@ class observation_overlay_display_owner_t:
 
     @staticmethod
     def _preview_request_with_delta (
-        request: observation_overlay_preview_request_t,
+        request: preview_contracts.request_t,
         delta_yx: tuple [float, float],
-    ) -> observation_overlay_preview_request_t:
+    ) -> preview_contracts.request_t:
         return replace (
             request,
             delta_yx = (float (delta_yx [0]), float (delta_yx [1])),
@@ -332,21 +329,20 @@ class observation_overlay_display_owner_t:
 
     def _apply_preview_materialized_scene (
         self,
-        *,
-        request: observation_overlay_preview_request_t,
-        scene: observation_overlay_scene_t,
+        request: preview_contracts.request_t,
+        scene: scene_model.scene_t,
         timing_prefix: str,
-    ) -> observation_overlay_preview_result_t:
+    ) -> preview_contracts.result_t:
         spec = self._preview_spec_for_scene (
-            request = request,
-            scene = scene,
+            request,
+            scene,
         )
         timings_ms: list [tuple [str, float]] = []
         applied = self._apply_preview_scene (
-            spec = spec,
-            scene = scene,
-            source_layer_key = str (request.source_layer_key or ""),
-            timings_ms = timings_ms,
+            spec,
+            scene,
+            str (request.source_layer_key or ""),
+            timings_ms,
         )
         renamed_timings = tuple (
             (
@@ -355,32 +351,30 @@ class observation_overlay_display_owner_t:
             )
             for name, elapsed in timings_ms
         )
-        return observation_overlay_preview_result_t (
-            scene = scene,
-            timings_ms = renamed_timings,
+        return preview_contracts.result_t (
+            scene,
+            renamed_timings,
             applied = bool (applied),
             reason = "applied" if bool (applied) else "not_applied",
         )
 
     def _apply_preview_visual (
         self,
-        *,
-        request: observation_overlay_preview_request_t,
-        scene: observation_overlay_scene_t,
+        request: preview_contracts.request_t,
+        scene: scene_model.scene_t,
     ) -> bool:
         return bool (self._preview_visual_owner.apply (
             spec = self._preview_spec_for_scene (
-                request = request,
-                scene = scene,
+                request,
+                scene,
             ),
             scene = scene,
         ))
 
     def _prepare_preview_visual (
         self,
-        *,
-        spec: observation_overlay_layer_apply_spec_t,
-        scene: observation_overlay_scene_t,
+        spec: render_contracts.layer_apply_spec_t,
+        scene: scene_model.scene_t,
     ) -> bool:
         prepare = getattr (self._preview_visual_owner, "prepare", None)
         if not callable (prepare):
@@ -392,7 +386,7 @@ class observation_overlay_display_owner_t:
 
     def _hide_preview_visual (
         self,
-        request: observation_overlay_preview_request_t,
+        request: preview_contracts.request_t,
     ) -> None:
         hide_source = getattr (self._preview_visual_owner, "hide_source", None)
         if callable (hide_source):
@@ -404,7 +398,7 @@ class observation_overlay_display_owner_t:
 
     def _remove_preview_visual (
         self,
-        request: observation_overlay_preview_request_t,
+        request: preview_contracts.request_t,
     ) -> None:
         self._preview_visual_owner.remove_source (
             source_layer_key = str (request.source_layer_key or ""),
@@ -412,12 +406,11 @@ class observation_overlay_display_owner_t:
 
     def _preview_spec_for_scene (
         self,
-        *,
-        request: observation_overlay_preview_request_t,
-        scene: observation_overlay_scene_t,
-    ) -> observation_overlay_layer_apply_spec_t:
-        return observation_overlay_layer_apply_spec_t (
-            base_scene = observation_overlay_scene_t.empty (),
+        request: preview_contracts.request_t,
+        scene: scene_model.scene_t,
+    ) -> render_contracts.layer_apply_spec_t:
+        return render_contracts.layer_apply_spec_t (
+            base_scene = scene_model.scene_t.empty (),
             replace_components = tuple (),
             added_scene = scene,
             layout_side_px = float (request.layout_side_px),
@@ -428,14 +421,14 @@ class observation_overlay_display_owner_t:
 
     def _merge_single_layer (
         self,
-        layer_spec: observation_overlay_layer_apply_spec_t,
+        layer_spec: render_contracts.layer_apply_spec_t,
         layer_index: int,
         timings_ms: list [tuple [str, float]],
-    ) -> observation_overlay_scene_t:
+    ) -> scene_model.scene_t:
         added_scene = (
             layer_spec.added_scene
-            if isinstance (layer_spec.added_scene, observation_overlay_scene_t)
-            else observation_overlay_scene_t.empty ()
+            if isinstance (layer_spec.added_scene, scene_model.scene_t)
+            else scene_model.scene_t.empty ()
         )
         merge_started_at = perf_counter ()
         base_scene = self._base_scene_for_spec (layer_spec)
@@ -452,9 +445,8 @@ class observation_overlay_display_owner_t:
 
     def _materialize_layer (
         self,
-        *,
-        spec: observation_overlay_layer_apply_spec_t,
-        merged_scene: observation_overlay_scene_t,
+        spec: render_contracts.layer_apply_spec_t,
+        merged_scene: scene_model.scene_t,
         layer_index: int,
         timings_ms: list [tuple [str, float]],
     ) -> str:
@@ -463,11 +455,11 @@ class observation_overlay_display_owner_t:
             return "skipped"
         apply_started_at = perf_counter ()
         self._apply_pending_scene (
-            spec = spec,
-            scene = merged_scene,
-            source_layer_key = source_layer_key,
-            layer_index = layer_index,
-            timings_ms = timings_ms,
+            spec,
+            merged_scene,
+            source_layer_key,
+            layer_index,
+            timings_ms,
         )
         timings_ms.append ((
             f"merge_apply.layer{int (layer_index)}.apply_immediate",
@@ -477,14 +469,13 @@ class observation_overlay_display_owner_t:
 
     def _apply_pending_scene (
         self,
-        *,
-        spec: observation_overlay_layer_apply_spec_t,
-        scene: observation_overlay_scene_t,
+        spec: render_contracts.layer_apply_spec_t,
+        scene: scene_model.scene_t,
         source_layer_key: str,
         layer_index: int,
         timings_ms: list [tuple [str, float]] | None,
     ) -> None:
-        if not isinstance(scene, observation_overlay_scene_t):
+        if not isinstance(scene, scene_model.scene_t):
             return
         apply_started_at = perf_counter ()
         self._scene_visual_owner.apply (
@@ -492,8 +483,8 @@ class observation_overlay_display_owner_t:
             scene = scene,
         )
         self._prepare_preview_visual (
-            spec = spec,
-            scene = scene,
+            spec,
+            scene,
         )
         if timings_ms is not None:
             timings_ms.append ((
@@ -506,19 +497,18 @@ class observation_overlay_display_owner_t:
                 0.0,
             ))
         self._runtime_store.set_current_scene(
-            source_layer_key=source_layer_key,
-            scene=scene,
+            source_layer_key,
+            scene,
         )
 
     def _apply_preview_scene (
         self,
-        *,
-        spec: observation_overlay_layer_apply_spec_t,
-        scene: observation_overlay_scene_t,
+        spec: render_contracts.layer_apply_spec_t,
+        scene: scene_model.scene_t,
         source_layer_key: str,
         timings_ms: list [tuple [str, float]] | None,
     ) -> bool:
-        if not isinstance (scene, observation_overlay_scene_t):
+        if not isinstance (scene, scene_model.scene_t):
             return False
         if not str (source_layer_key or ""):
             return False
@@ -538,8 +528,8 @@ class observation_overlay_display_owner_t:
                 0.0,
             ))
         self._runtime_store.set_current_scene(
-            source_layer_key=source_layer_key,
-            scene=scene,
+            source_layer_key,
+            scene,
         )
         return bool (applied)
 
@@ -575,18 +565,18 @@ class observation_overlay_display_owner_t:
 
     def _base_scene_for_spec (
         self,
-        spec: observation_overlay_layer_apply_spec_t,
-    ) -> observation_overlay_scene_t:
+        spec: render_contracts.layer_apply_spec_t,
+    ) -> scene_model.scene_t:
         current = self._runtime_store.current_scene(self._source_layer_key(spec))
-        if isinstance (current, observation_overlay_scene_t):
+        if isinstance (current, scene_model.scene_t):
             return current
-        if isinstance (spec.base_scene, observation_overlay_scene_t):
+        if isinstance (spec.base_scene, scene_model.scene_t):
             return spec.base_scene
-        return observation_overlay_scene_t.empty ()
+        return scene_model.scene_t.empty ()
 
     @staticmethod
     def _source_layer_key (
-        spec: observation_overlay_layer_apply_spec_t,
+        spec: render_contracts.layer_apply_spec_t,
     ) -> str:
         source_layer_key = str(getattr(spec, "source_layer_key", "") or "").strip()
         if source_layer_key:

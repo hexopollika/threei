@@ -17,7 +17,7 @@ class super_resolution_result_controller_t:
         status_label,
         image_center_getter,
         reference_layer_finder,
-        nanpercentile_limits_getter,
+        display_limits_getter,
         upsert_image_layer,
         set_sr_layer_metadata,
         show_error,
@@ -30,7 +30,7 @@ class super_resolution_result_controller_t:
         self._status_label = status_label
         self._image_center_getter = image_center_getter
         self._reference_layer_finder = reference_layer_finder
-        self._nanpercentile_limits_getter = nanpercentile_limits_getter
+        self._display_limits_getter = display_limits_getter
         self._upsert_image_layer = upsert_image_layer
         self._set_sr_layer_metadata = set_sr_layer_metadata
         self._show_error = show_error
@@ -52,7 +52,8 @@ class super_resolution_result_controller_t:
         hr_image_center_yx = self._image_center_getter (sr_result.hr_image)
         hr_target_yx = getattr (sr_result, "hr_target_yx", None)
         if not self._is_valid_center_yx (hr_target_yx):
-            hr_target_yx = hr_image_center_yx
+            self._fail_result ("Target MFSR result is missing sr_hr_target_yx.")
+            return
 
         layer_scale = None
         layer_translate = None
@@ -64,13 +65,8 @@ class super_resolution_result_controller_t:
                 reference_center_yx = request.get ("reference_center_yx")
 
             if not self._is_valid_center_yx (reference_center_yx):
-                reference_center_yx = reference_adapter.target_center_yx ()
-
-            if not self._is_valid_center_yx (reference_center_yx):
-                reference_center_yx = reference_adapter.image_center_yx ()
-
-            if not self._is_valid_center_yx (reference_center_yx):
-                reference_center_yx = (0.0, 0.0)
+                self._fail_result ("Target MFSR result is missing reference_center_yx.")
+                return
 
             reference_center_y = float (reference_center_yx [0])
             reference_center_x = float (reference_center_yx [1])
@@ -93,11 +89,7 @@ class super_resolution_result_controller_t:
 
         base_name = f"Target MFSR x{int (request['params'].scale)}"
         colormap_name = request.get ("reference_colormap") or "gray"
-        limits = self._nanpercentile_limits_getter (sr_result.hr_image)
-        if limits == (0.0, 1.0):
-            ref_limits = request.get ("reference_limits")
-            if isinstance (ref_limits, tuple) and len (ref_limits) == 2:
-                limits = ref_limits
+        limits = self._display_limits_getter (sr_result.hr_image)
 
         out_layer = self._upsert_image_layer (
             self._viewer,
@@ -120,7 +112,7 @@ class super_resolution_result_controller_t:
 
         if bool (request.get ("show_weight_layer", False)):
             weight_name = f"{base_name} [weight]"
-            w_limits = self._nanpercentile_limits_getter (sr_result.hr_weight)
+            w_limits = self._display_limits_getter (sr_result.hr_weight)
             weight_layer = self._upsert_image_layer (
                 self._viewer,
                 name = weight_name,
@@ -177,6 +169,14 @@ class super_resolution_result_controller_t:
         if callable (is_node_active):
             return bool (is_node_active (sr_node))
         return True
+
+    def _fail_result (self, message: str) -> None:
+        text = str (message)
+        self._status_label.setText (text)
+        try:
+            self._show_error (text)
+        except Exception:
+            pass
 
     @staticmethod
     def _is_valid_center_yx (value) -> bool:

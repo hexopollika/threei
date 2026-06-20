@@ -3,24 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from pathlib import Path
-import re
 from typing import Any, Optional, cast
 
-from astropy.coordinates import Angle, EarthLocation
+from astropy.coordinates import EarthLocation
 from astropy.io import fits
 from astropy.time import Time
 from astropy.wcs import WCS
 import astropy.units as u
 import numpy as np
 
+import threei.observation.overlay.context_cache as context_cache
+import threei.observation.overlay.context_model as context_model
 from threei.observation.overlay.models import (
     observation_observer_resolution_t,
-    observation_overlay_context_t,
-    observation_overlay_layer_context_cache_key_t,
-    observation_overlay_layer_context_cache_t,
-    observation_overlay_layer_context_cache_value_t,
 )
+from threei.observation.overlay.context_layer_policy import observation_context_layer_policy_t
+from threei.observation.overlay.context_observer_policy import observation_context_observer_policy_t
 from threei.ui.layers import image_layer_adapter_t
 
 
@@ -40,7 +38,7 @@ class distance_au_request_t:
     key: str
     comment: str
 
-class observation_overlay_context_provider_t:
+class observation_context_provider_t:
     DERIVED_WCS_METADATA_KEYS: tuple [str, ...] = (
         "pipeline_wcs",
         "sr_hr_wcs",
@@ -80,9 +78,14 @@ class observation_overlay_context_provider_t:
     def __init__ (self):
         self._fits_service = None
         self._fits_service_loaded = False
-        self._layer_context_cache = observation_overlay_layer_context_cache_t ()
+        self._layer_context_cache = context_cache.store_t ()
+        self._layer_policy = observation_context_layer_policy_t (
+            derived_wcs_metadata_keys = self.DERIVED_WCS_METADATA_KEYS,
+            image_layer_adapter_factory = image_layer_adapter_t,
+        )
+        self._observer_policy = observation_context_observer_policy_t ()
 
-    def resolve (self, layer) -> Optional[observation_overlay_context_t]:
+    def resolve (self, layer) -> Optional[context_model.root_t]:
         resolved = self._resolve_layer_data_cached (layer)
         return resolved.context
 
@@ -106,12 +109,12 @@ class observation_overlay_context_provider_t:
             layer_key = str (cache_key.layer_key or ""),
         )
 
-    def invalidate_layer_key (self, *, layer_key: str) -> None:
+    def invalidate_layer_key (self, layer_key: str) -> None:
         self._layer_context_cache.invalidate_layer (
             layer_key = str (layer_key or ""),
         )
 
-    def _resolve_layer_data_cached (self, layer) -> observation_overlay_layer_context_cache_value_t:
+    def _resolve_layer_data_cached (self, layer) -> context_cache.value_t:
         cache_key = self._layer_context_cache_key (layer)
         if cache_key is not None:
             cached = self._layer_context_cache.get (key = cache_key)
@@ -125,7 +128,7 @@ class observation_overlay_context_provider_t:
             )
         return resolved
 
-    def _resolve_layer_data_uncached (self, layer) -> observation_overlay_layer_context_cache_value_t:
+    def _resolve_layer_data_uncached (self, layer) -> context_cache.value_t:
         service_context = self._resolve_via_fits_service (layer)
         if service_context is not None and self._context_has_observer (service_context):
             context = service_context
@@ -144,7 +147,7 @@ class observation_overlay_context_provider_t:
             layer,
             context,
         )
-        return observation_overlay_layer_context_cache_value_t (
+        return context_cache.value_t (
             context,
             headers = tuple (header for header in headers if isinstance (header, fits.Header)),
         )
@@ -152,48 +155,10 @@ class observation_overlay_context_provider_t:
     def _layer_context_cache_key (
         self,
         layer,
-    ) -> Optional[observation_overlay_layer_context_cache_key_t]:
-        try:
-            layer_adapter = image_layer_adapter_t (layer)
-        except Exception:
-            return None
-        if not layer_adapter.is_valid:
-            return None
-        layer_key = str (layer_adapter.layer_key or "")
-        if not layer_key:
-            return None
-        metadata = layer_adapter.ensure_metadata ()
-        fits_path = str (metadata.get ("fits_path", "") or "")
-        fits_hdu_index_raw = metadata.get ("fits_hdu_index", -1)
-        try:
-            fits_hdu_index = int (fits_hdu_index_raw)
-        except Exception:
-            fits_hdu_index = -1
-        fits_file_stamp = self._fits_file_stamp (fits_path)
-        wcs_override_key = self._layer_wcs_override_cache_token (layer_adapter)
-        resolved_fits_hdu_index = int (fits_hdu_index)
-        return observation_overlay_layer_context_cache_key_t (
-            layer_key,
-            fits_path,
-            resolved_fits_hdu_index,
-            fits_file_stamp,
-            wcs_override_key,
-        )
+    ) -> Optional[context_cache.key_t]:
+        return self._layer_policy.cache_key_for_layer (layer)
 
-    def _fits_file_stamp (self, fits_path: str) -> tuple [int, int] | None:
-        path_text = str (fits_path or "").strip ()
-        if not path_text:
-            return None
-        try:
-            st = Path (path_text).stat ()
-        except Exception:
-            return None
-        try:
-            return (int (st.st_mtime_ns), int (st.st_size))
-        except Exception:
-            return None
-
-    def _context_has_observer (self, context: Optional[observation_overlay_context_t]) -> bool:
+    def _context_has_observer (self, context: Optional[context_model.root_t]) -> bool:
         if context is None:
             return False
         if getattr (context, "observer_location", None) is not None:
@@ -202,7 +167,7 @@ class observation_overlay_context_provider_t:
             return bool (str (getattr (context, "observer_horizons_location_id", "")).strip ())
         return False
 
-    def _resolve_via_fits_service (self, layer) -> Optional[observation_overlay_context_t]:
+    def _resolve_via_fits_service (self, layer) -> Optional[context_model.root_t]:
         service = self._get_fits_service ()
         if service is None:
             return None
@@ -235,7 +200,7 @@ class observation_overlay_context_provider_t:
             ingredients,
         )
 
-    def _resolve_via_fits_path (self, layer) -> Optional[observation_overlay_context_t]:
+    def _resolve_via_fits_path (self, layer) -> Optional[context_model.root_t]:
         layer_adapter = image_layer_adapter_t (layer)
         if not layer_adapter.is_valid:
             return None
@@ -286,8 +251,8 @@ class observation_overlay_context_provider_t:
     def _context_with_layer_wcs_override (
         self,
         layer,
-        context: Optional[observation_overlay_context_t],
-    ) -> Optional[observation_overlay_context_t]:
+        context: Optional[context_model.root_t],
+    ) -> Optional[context_model.root_t]:
         if context is None:
             return None
         override_wcs = self._layer_wcs_override (layer)
@@ -299,58 +264,11 @@ class observation_overlay_context_provider_t:
             source = f"{context.source}+layer_wcs",
         )
 
-    def _layer_wcs_override_cache_token (
-        self,
-        layer_adapter: image_layer_adapter_t,
-    ) -> str:
-        override_wcs = self._layer_wcs_override_from_metadata (
-            layer_adapter.ensure_metadata () if layer_adapter.is_valid else {},
-        )
-        if override_wcs is None:
-            return ""
-        return f"{type (override_wcs).__name__}:{id (override_wcs)}"
-
     def _layer_wcs_override (
         self,
         layer,
     ) -> Optional[WCS]:
-        try:
-            layer_adapter = image_layer_adapter_t (layer)
-        except Exception:
-            return None
-        if not layer_adapter.is_valid:
-            return None
-        return self._layer_wcs_override_from_metadata (layer_adapter.ensure_metadata ())
-
-    def _layer_wcs_override_from_metadata (
-        self,
-        metadata: dict[str, Any],
-    ) -> Optional[WCS]:
-        if not isinstance (metadata, dict):
-            return None
-        for key in self.DERIVED_WCS_METADATA_KEYS:
-            candidate = metadata.get (key)
-            wcs = self._normalized_wcs_override (candidate)
-            if wcs is not None:
-                return wcs
-        return None
-
-    @staticmethod
-    def _normalized_wcs_override (
-        candidate,
-    ) -> Optional[WCS]:
-        if not isinstance (candidate, WCS):
-            return None
-        try:
-            wcs = candidate.celestial
-        except Exception:
-            wcs = candidate
-        try:
-            if not bool (wcs.has_celestial):
-                return None
-        except Exception:
-            return None
-        return wcs
+        return self._layer_policy.layer_wcs_override (layer)
 
     def _resolve_headers_via_fits_service (self, layer) -> list [fits.Header]:
         service = self._get_fits_service ()
@@ -434,9 +352,9 @@ class observation_overlay_context_provider_t:
         wcs: WCS,
         source: str,
         ingredients: _overlay_context_ingredients_t,
-    ) -> observation_overlay_context_t:
+    ) -> context_model.root_t:
         resolved_source = str (source)
-        return observation_overlay_context_t (
+        return context_model.root_t (
             wcs,
             ingredients.obstime,
             resolved_source,
@@ -543,271 +461,44 @@ class observation_overlay_context_provider_t:
         self,
         headers: list [fits.Header],
     ) -> observation_observer_resolution_t:
-        for header in headers:
-            location = self._observer_from_header (header)
-            if location is not None:
-                resolved_observer_source = "header"
-                resolved_observer_mode = "ground"
-                resolved_observer_horizons_location_id = ""
-                return observation_observer_resolution_t (
-                    location,
-                    resolved_observer_source,
-                    resolved_observer_mode,
-                    resolved_observer_horizons_location_id,
-                )
-
-        gemini_site = self._gemini_site_from_headers (headers)
-        if gemini_site is not None:
-            resolved_observer_source = "gemini_map"
-            resolved_observer_mode = "ground"
-            resolved_observer_horizons_location_id = ""
-            return observation_observer_resolution_t (
-                gemini_site,
-                resolved_observer_source,
-                resolved_observer_mode,
-                resolved_observer_horizons_location_id,
-            )
-        space_location_id = self._space_observer_location_id_from_headers (headers)
-        if space_location_id:
-            return observation_observer_resolution_t (
-                observer_location = None,
-                observer_source = "space_header",
-                observer_mode = "space",
-                observer_horizons_location_id = str (space_location_id),
-            )
-        hst_location_id = self._hst_horizons_location_from_headers (headers)
-        if hst_location_id:
-            return observation_observer_resolution_t (
-                observer_location = None,
-                observer_source = "hst_map",
-                observer_mode = "space",
-                observer_horizons_location_id = str (hst_location_id),
-            )
-        return observation_observer_resolution_t (
-            observer_location = None,
-            observer_source = "geocenter_fallback",
-            observer_mode = "geocenter",
-            observer_horizons_location_id = "",
-        )
+        return self._observer_policy.observer_from_headers (headers)
 
     def _observer_with_fallback (
         self,
         headers: list [fits.Header],
         fits_path: str,
     ) -> observation_observer_resolution_t:
-        observer = self._observer_from_headers (headers)
-        if self._has_observer_resolution (observer):
-            return observer
-        path_site = self._gemini_site_from_path (str (fits_path or ""))
-        if path_site is not None:
-            resolved_observer_source = "gemini_path_map"
-            resolved_observer_mode = "ground"
-            resolved_observer_horizons_location_id = ""
-            return observation_observer_resolution_t (
-                path_site,
-                resolved_observer_source,
-                resolved_observer_mode,
-                resolved_observer_horizons_location_id,
-            )
-        return observation_observer_resolution_t (
-            observer_location = None,
-            observer_source = "geocenter_fallback",
-            observer_mode = "geocenter",
-            observer_horizons_location_id = "",
+        return self._observer_policy.observer_with_fallback (
+            headers,
+            fits_path,
         )
 
     def _has_observer_resolution (self, observer: observation_observer_resolution_t) -> bool:
-        if not isinstance (observer, observation_observer_resolution_t):
-            return False
-        if observer.observer_location is not None:
-            return True
-        if str (observer.observer_mode).strip ().lower () == "space":
-            return bool (str (observer.observer_horizons_location_id or "").strip ())
-        return False
+        return self._observer_policy.has_observer_resolution (observer)
 
     def _observer_from_header (self, header: fits.Header) -> Optional[EarthLocation]:
-        if not isinstance (header, fits.Header):
-            return None
-
-        x = self._parse_float (header.get ("OBSGEO-X"))
-        y = self._parse_float (header.get ("OBSGEO-Y"))
-        z = self._parse_float (header.get ("OBSGEO-Z"))
-        if x is not None and y is not None and z is not None:
-            try:
-                return EarthLocation.from_geocentric (x * u.m, y * u.m, z * u.m)
-            except Exception:
-                pass
-
-        lon = self._parse_angle_deg (header.get ("OBSGEO-L"))
-        lat = self._parse_angle_deg (header.get ("OBSGEO-B"))
-        height = self._parse_float (header.get ("OBSGEO-H"))
-        if lon is not None and lat is not None:
-            try:
-                height_m = float (height) if height is not None else 0.0
-                return EarthLocation.from_geodetic (
-                    lon = float (lon) * u.deg,
-                    lat = float (lat) * u.deg,
-                    height = float (height_m) * u.m,
-                )
-            except Exception:
-                pass
-
-        lon = self._parse_angle_deg (
-            self._first_present (
-                header,
-                ("GEOLON", "LONGITUD"),
-            )
-        )
-        lat = self._parse_angle_deg (
-            self._first_present (
-                header,
-                ("GEOLAT", "LATITUDE"),
-            )
-        )
-        height = self._parse_float (
-            self._first_present (
-                header,
-                ("ELEVATIO", "ALTITUDE"),
-            )
-        )
-        if lon is not None and lat is not None:
-            try:
-                height_m = float (height) if height is not None else 0.0
-                return EarthLocation.from_geodetic (
-                    lon = float (lon) * u.deg,
-                    lat = float (lat) * u.deg,
-                    height = float (height_m) * u.m,
-                )
-            except Exception:
-                pass
-        return None
+        return self._observer_policy.observer_location_from_header (header)
 
     def _space_observer_location_id_from_headers (self, headers: list [fits.Header]) -> str:
-        for header in headers:
-            if not isinstance (header, fits.Header):
-                continue
-            for key in self.SPACE_LOCATION_HEADER_KEYS:
-                if key not in header:
-                    continue
-                value = header.get (key)
-                location_id = self._normalize_horizons_location_id (value)
-                if location_id:
-                    return location_id
-        return ""
+        return self._observer_policy.space_observer_location_id_from_headers (headers)
 
     def _hst_horizons_location_from_headers (self, headers: list [fits.Header]) -> str:
-        tokens = self._header_tokens_for_observer_matching (headers)
-        for token in tokens:
-            if self._is_hst_token (token):
-                return str (self.HST_DEFAULT_HORIZONS_LOCATION_ID)
-        return ""
+        return self._observer_policy.hst_horizons_location_from_headers (headers)
 
     def _header_tokens_for_observer_matching (self, headers: list [fits.Header]) -> list [str]:
-        tokens: list[str] = []
-        for header in headers:
-            if not isinstance (header, fits.Header):
-                continue
-            for key in (
-                "TELESCOP",
-                "OBSERVAT",
-                "OBSERVATORY",
-                "INSTRUME",
-                "INSTRUMENT",
-                "ORIGIN",
-                "OBSERVER",
-            ):
-                value = header.get (key)
-                if value is None:
-                    continue
-                text = str (value).strip ().lower ()
-                if text:
-                    tokens.append (text)
-        return tokens
+        return self._observer_policy.header_tokens_for_observer_matching (headers)
 
     def _is_hst_token (self, token: str) -> bool:
-        text = str (token or "").strip ().lower ()
-        if not text:
-            return False
-        return ("hubble" in text) or ("hst" in text)
+        return self._observer_policy.is_hst_token (token)
 
     def _normalize_horizons_location_id (self, value) -> str:
-        text = str (value or "").strip ()
-        if not text:
-            return ""
-        lowered = text.lower ()
-        if lowered in {"500", "500@", "geocenter", "geo"}:
-            return ""
-        if lowered.startswith ("@"):
-            normalized = text [1:].strip ()
-            return str (normalized) if normalized else ""
-        return str (text)
+        return self._observer_policy.normalize_horizons_location_id (value)
 
     def _gemini_site_from_headers (self, headers: list [fits.Header]) -> Optional[EarthLocation]:
-        tokens: list[str] = []
-        raw_values: list[str] = []
-        for header in headers:
-            if not isinstance (header, fits.Header):
-                continue
-            for key in (
-                "TELESCOP",
-                "OBSERVAT",
-                "OBSERVATORY",
-                "INSTRUME",
-                "INSTRUMENT",
-                "SITE",
-                "SITENAME",
-                "OBSID",
-                "GEMPRGID",
-                "PROGID",
-            ):
-                value = header.get (key)
-                if value is not None:
-                    text = str (value).strip ()
-                    raw_values.append (text)
-                    tokens.append (text.lower ())
-
-        joined = " ".join (token for token in tokens if token)
-        compact_values = [self._compact_token (value) for value in raw_values if str (value).strip ()]
-        if self._contains_exact_any (compact_values, ("gs", "geminis", "geminisouth", "gmoss")):
-            return self.GEMINI_SITE_LOCATIONS ["south"]
-        if self._contains_exact_any (compact_values, ("gn", "geminin", "gemininorth", "gmosn")):
-            return self.GEMINI_SITE_LOCATIONS ["north"]
-        if self._contains_prefix_any (compact_values, ("gs", "geminisouth", "gmoss")):
-            return self.GEMINI_SITE_LOCATIONS ["south"]
-        if self._contains_prefix_any (compact_values, ("gn", "gemininorth", "gmosn")):
-            return self.GEMINI_SITE_LOCATIONS ["north"]
-        if not joined:
-            return None
-        if "gemini" not in joined and not self._contains_any (joined, ("gmos-n", "gmos-s")):
-            return None
-        if self._contains_any (joined, ("south", "gemini-s", "cerro", "pachon", "gmos-s")):
-            return self.GEMINI_SITE_LOCATIONS ["south"]
-        if self._contains_any (joined, ("north", "gemini-n", "mauna", "kea", "gmos-n")):
-            return self.GEMINI_SITE_LOCATIONS ["north"]
-        return None
+        return self._observer_policy.gemini_site_from_headers (headers)
 
     def _gemini_site_from_path (self, fits_path: str) -> Optional[EarthLocation]:
-        text = str (fits_path or "").strip ()
-        if not text:
-            return None
-        normalized = text.replace ("\\", "/").lower ()
-        basename = Path (normalized).name
-        compact = self._compact_token (basename)
-        if self._contains_any (normalized, ("/gn/", "_gn_", "-gn-", "gemini-n", "gemini_n", "gemininorth")):
-            return self.GEMINI_SITE_LOCATIONS ["north"]
-        if self._contains_any (normalized, ("/gs/", "_gs_", "-gs-", "gemini-s", "gemini_s", "geminisouth")):
-            return self.GEMINI_SITE_LOCATIONS ["south"]
-        if compact.startswith ("n") and len (compact) >= 10 and compact [1:9].isdigit ():
-            return self.GEMINI_SITE_LOCATIONS ["north"]
-        if compact.startswith ("s") and len (compact) >= 10 and compact [1:9].isdigit ():
-            return self.GEMINI_SITE_LOCATIONS ["south"]
-        return None
-
-    def _first_present (self, header: fits.Header, keys: tuple [str, ...]):
-        for key in keys:
-            if key in header:
-                return header.get (key)
-        return None
+        return self._observer_policy.gemini_site_from_path (fits_path)
 
     def _parse_float (self, value) -> Optional[float]:
         if value is None:
@@ -819,51 +510,6 @@ class observation_overlay_context_provider_t:
         if not np.isfinite (parsed):
             return None
         return float (parsed)
-
-    def _parse_angle_deg (self, value) -> Optional[float]:
-        parsed_float = self._parse_float (value)
-        if parsed_float is not None:
-            return parsed_float
-        if value is None:
-            return None
-        text = str (value).strip ()
-        if not text:
-            return None
-        try:
-            angle = Angle (text, unit = u.deg)
-            return self._parse_float (cast (Any, angle.to_value (u.deg)))
-        except Exception:
-            return None
-
-    def _contains_any (self, text: str, needles: tuple [str, ...]) -> bool:
-        for needle in needles:
-            if needle in text:
-                return True
-        return False
-
-    def _contains_exact_any (self, values: list [str], expected: tuple [str, ...]) -> bool:
-        expected_values = {str (item).strip ().lower () for item in expected if str (item).strip ()}
-        for value in values:
-            if str (value).strip ().lower () in expected_values:
-                return True
-        return False
-
-    def _contains_prefix_any (self, values: list [str], prefixes: tuple [str, ...]) -> bool:
-        normalized_prefixes = [str (prefix).strip ().lower () for prefix in prefixes if str (prefix).strip ()]
-        if len (normalized_prefixes) <= 0:
-            return False
-        for value in values:
-            value_text = str (value).strip ().lower ()
-            for prefix in normalized_prefixes:
-                if value_text.startswith (prefix):
-                    return True
-        return False
-
-    def _compact_token (self, value: str) -> str:
-        text = str (value or "").strip ().lower ()
-        if not text:
-            return ""
-        return re.sub (r"[^a-z0-9]+", "", text)
 
     def _target_distances_from_headers (self, headers: list [fits.Header]) -> tuple [Optional[float], Optional[float]]:
         target_distance_au = self._distance_from_headers (

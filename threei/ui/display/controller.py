@@ -7,21 +7,34 @@ from dataclasses import dataclass
 from napari.layers import Image
 
 from threei.processing.compute_manager import compute_manager_t
-from threei.ui.common.dock import add_tabbed_dock_widget, refresh_viewer_tab_style
+from threei.ui.common.dock import (
+    add_tabbed_dock_widget,
+    rebalance_visible_docks_by_content,
+    refresh_viewer_tab_style,
+)
 from threei.ui.common.viewer_component_base import viewer_component_t
 from threei.ui.display.factory import default_display_panel_factory_t
 from threei.ui.display.layer_selection_controller import display_layer_selection_controller_t
 from threei.ui.display.panel_widgets import display_panel_widgets_t
+from threei.ui.derived_image.preview_controls import (
+    derived_image_preview_manager_t,
+    derived_image_preview_target_t,
+)
 from threei.ui.layers import image_layer_adapter_t
+from threei.ui.layers.napari_layer_guard import restore_active_layer
 
 
 @dataclass (slots = True)
 class display_tool_record_t:
     source_layer: Image
     tool_type: str
+    source_layer_id: str = ""
+    output_layer: Image | None = None
+    output_layer_id: str | None = None
     widget: object | None = None
     dock: object | None = None
     base_data_callback: object | None = None
+    preview_size: int = derived_image_preview_manager_t.PREVIEW_SIZE_DEFAULT
 
 
 class display_apply_controller_t:
@@ -51,8 +64,8 @@ class display_apply_controller_t:
 
         tool_type = str (self._tool_combo.value)
         self._manager.ensure_tool_widget (
-            source_layer = source_layer,
-            tool_type = tool_type,
+            source_layer,
+            tool_type,
         )
 
     def cleanup (self) -> None:
@@ -68,7 +81,6 @@ class display_apply_controller_t:
 class display_manager_t (viewer_component_t):
     TOOL_CHOICES = [
         ("nonlinear", "nonlinear"),
-        ("segmented tone", "segmented_tone"),
     ]
 
     def __init__ (self, viewer):
@@ -76,9 +88,11 @@ class display_manager_t (viewer_component_t):
         self.compute_manager = compute_manager_t ()
         self._disposed = False
         self._records_by_key: dict [tuple [str, str], display_tool_record_t] = {}
+        self.preview_controls = derived_image_preview_manager_t.setup (self.viewer)
         self.panel_factory = default_display_panel_factory_t (
             self.viewer,
             compute_manager = self.compute_manager,
+            target_center_getter = self._layer_target_center,
         )
 
         self.widgets = display_panel_widgets_t.create (
@@ -112,11 +126,12 @@ class display_manager_t (viewer_component_t):
 
     def ensure_tool_widget (
         self,
-        *,
         source_layer: Image,
         tool_type: str,
     ) -> display_tool_record_t:
-        key = self._record_key (source_layer, tool_type)
+        source_adapter = image_layer_adapter_t (source_layer)
+        source_layer_id = source_adapter.layer_key
+        key = self._record_key (source_layer_id, tool_type)
         existing = self._records_by_key.get (key)
         if existing is not None:
             self._show_record (existing)
@@ -124,8 +139,9 @@ class display_manager_t (viewer_component_t):
             return existing
 
         record = display_tool_record_t (
-            source_layer = source_layer,
+            source_layer,
             tool_type = str (tool_type),
+            source_layer_id = source_layer_id,
         )
         record.widget = self.panel_factory.create (
             tool_type,
@@ -133,6 +149,7 @@ class display_manager_t (viewer_component_t):
             lambda layer: self._on_output_layer (record, layer),
             job_key = self._job_key_for_record_key (key),
             base_layer_getter = lambda: record.source_layer,
+            preview_size_getter = lambda: record.preview_size,
         )
         record.dock = self.viewer.window.add_dock_widget (
             record.widget,
@@ -140,6 +157,7 @@ class display_manager_t (viewer_component_t):
             name = f"display: {tool_type}: {source_layer.name}",
         )
         refresh_viewer_tab_style (self.viewer)
+        self._rebalance_right_docks ()
 
         record.base_data_callback = lambda event = None: self._on_base_data (record)
         try:
@@ -148,6 +166,7 @@ class display_manager_t (viewer_component_t):
             pass
 
         self._records_by_key [key] = record
+        self._activate_preview_target (record)
         self._refresh_record (record)
         return record
 
@@ -170,14 +189,25 @@ class display_manager_t (viewer_component_t):
         self.cleanup ()
 
     def _on_output_layer (self, record: display_tool_record_t, layer) -> None:
+        first_output = not isinstance (record.output_layer_id, str)
         layer_adapter = image_layer_adapter_t (layer)
         source_adapter = image_layer_adapter_t (record.source_layer)
         if not layer_adapter.is_valid or not source_adapter.is_valid:
             return
+        source_layer = source_adapter.layer
+        if source_layer is None:
+            return
         metadata = layer_adapter.ensure_metadata ()
-        metadata ["pipeline_display_source_layer_key"] = source_adapter.layer_key
-        metadata ["pipeline_display_source_layer_name"] = str (source_adapter.layer.name)
+        source_layer_id = source_adapter.layer_key
+        output_layer_id = layer_adapter.layer_key
+        record.source_layer_id = source_layer_id
+        record.output_layer = layer_adapter.layer
+        record.output_layer_id = output_layer_id
+        metadata ["pipeline_display_source_layer_key"] = source_layer_id
+        metadata ["pipeline_display_source_layer_name"] = str (source_layer.name)
         metadata ["pipeline_display_tool"] = str (record.tool_type)
+        if first_output:
+            restore_active_layer (self.viewer, layer_adapter.layer)
 
     def _on_base_data (self, record: display_tool_record_t) -> None:
         widget = record.widget
@@ -198,18 +228,21 @@ class display_manager_t (viewer_component_t):
         if removed_layer is None:
             return
         for key, record in list (self._records_by_key.items ()):
-            if record.source_layer is removed_layer:
-                self._records_by_key.pop (key, None)
+            if self._record_depends_on_removed_layer (record, removed_layer):
                 self._cleanup_record (record)
 
     def _on_window_destroyed (self, event = None):
         self.cleanup ()
 
-    def _record_key (self, source_layer: Image, tool_type: str) -> tuple [str, str]:
-        return (str (id (source_layer)), str (tool_type))
+    def _record_key (self, source_layer_id: str, tool_type: str) -> tuple [str, str]:
+        return (str (source_layer_id), str (tool_type))
 
     def _job_key_for_record_key (self, key: tuple [str, str]) -> str:
         return f"display:{key [0]}:{key [1]}"
+
+    @staticmethod
+    def _layer_target_center (layer):
+        return image_layer_adapter_t (layer).target_center_yx ()
 
     def _refresh_record (self, record: display_tool_record_t) -> None:
         widget = record.widget
@@ -220,6 +253,7 @@ class display_manager_t (viewer_component_t):
                 pass
 
     def _show_record (self, record: display_tool_record_t) -> None:
+        self._activate_preview_target (record)
         dock = record.dock
         if dock is None:
             return
@@ -229,8 +263,19 @@ class display_manager_t (viewer_component_t):
                 set_visible (True)
             except Exception:
                 pass
+        self._rebalance_right_docks ()
 
     def _cleanup_record (self, record: display_tool_record_t) -> None:
+        self._records_by_key.pop (
+            self._record_key (record.source_layer_id, record.tool_type),
+            None,
+        )
+        self.compute_manager.invalidate (self._job_key_for_record_key (
+            self._record_key (record.source_layer_id, record.tool_type),
+        ))
+        self.preview_controls.clear_active_target (
+            self._preview_target_id_for_record (record),
+        )
         if record.base_data_callback is not None:
             try:
                 record.source_layer.events.data.disconnect (record.base_data_callback)
@@ -250,6 +295,62 @@ class display_manager_t (viewer_component_t):
                     close_dock ()
                 except Exception:
                     pass
+        self._rebalance_right_docks ()
+
+    @staticmethod
+    def _record_depends_on_removed_layer (
+        record: display_tool_record_t,
+        removed_layer,
+    ) -> bool:
+        if record.source_layer is removed_layer:
+            return True
+        if record.output_layer is removed_layer:
+            return True
+        removed_adapter = image_layer_adapter_t (removed_layer)
+        if not removed_adapter.is_valid:
+            return False
+        return (
+            isinstance (record.output_layer_id, str)
+            and removed_adapter.layer_key == record.output_layer_id
+        )
+
+    def _rebalance_right_docks (self) -> None:
+        rebalance_visible_docks_by_content (
+            getattr (self.viewer.window, "_qt_window", None),
+            area = "right",
+        )
+
+    def _activate_preview_target (self, record: display_tool_record_t) -> None:
+        self.preview_controls.set_active_target (
+            derived_image_preview_target_t (
+                target_id = self._preview_target_id_for_record (record),
+                size_getter = lambda record = record: record.preview_size,
+                size_setter = lambda value, record = record: self._set_record_preview_size (
+                    record,
+                    value,
+                ),
+                submit_current = lambda record = record: self._refresh_record (record),
+            )
+        )
+
+    @staticmethod
+    def _set_record_preview_size (
+        record: display_tool_record_t,
+        value,
+    ) -> int:
+        try:
+            parsed = int (value)
+        except Exception:
+            parsed = derived_image_preview_manager_t.PREVIEW_SIZE_DEFAULT
+        normalized = max (
+            derived_image_preview_manager_t.PREVIEW_SIZE_MIN,
+            min (derived_image_preview_manager_t.PREVIEW_SIZE_MAX, parsed),
+        )
+        record.preview_size = normalized
+        return normalized
+
+    def _preview_target_id_for_record (self, record: display_tool_record_t) -> str:
+        return f"display:{record.source_layer_id}:{record.tool_type}"
 
 
 def setup_display_widgets (viewer):

@@ -2,25 +2,31 @@
 # Licensed under the MIT License
 from __future__ import annotations
 
+import threei.observation.overlay.scene_model as scene_model
+from dataclasses import dataclass
 import math
 from typing import TYPE_CHECKING, Any, Callable
 
-from threei.observation.overlay.models import (
-    observation_overlay_block_ui_state_t,
-    observation_overlay_hud_layout_spec_t,
-    observation_overlay_layer_apply_spec_t,
-    observation_overlay_render_bundle_t,
-    observation_overlay_render_settings_t,
-    observation_overlay_scene_t,
-    observation_viewport_context_t,
-)
+import threei.observation.overlay.panel_state as panel_state
+import threei.observation.overlay.render_contracts as render_contracts
+import threei.observation.overlay.update_context as update_context
 from threei.observation.overlay.scene.hud_geometry import HUD_DEFAULT_MARGIN_PX
 
 if TYPE_CHECKING:
-    from threei.observation.overlay.scene_manager import observation_overlay_scene_manager_t
+    from threei.observation.overlay.scene_manager import observation_scene_manager_t
 
 
-class observation_overlay_render_spec_factory_t:
+@dataclass(frozen=True, slots=True)
+class _layer_apply_spec_request_t:
+    layer_bundle: object
+    replace_components: tuple[str, ...]
+    added_scene: object
+    layout_side_px: float
+    render_settings: render_contracts.settings_t | None = None
+    base_scene: object | None = None
+
+
+class observation_render_spec_factory_t:
     HUD_INITIAL_MARGIN_PX = HUD_DEFAULT_MARGIN_PX
     _LEGACY_PLACEMENT_DEBUG_COMPONENTS = (
         "__debug_placement_frame",
@@ -36,30 +42,30 @@ class observation_overlay_render_spec_factory_t:
     def __init__ (
         self,
         *,
-        overlay_scene_manager: observation_overlay_scene_manager_t,
+        overlay_scene_manager: observation_scene_manager_t,
         render_settings_getter: Callable[[], Any] | None = None,
     ):
         self._overlay_scene_manager = overlay_scene_manager
         self._render_settings_getter = render_settings_getter if callable (render_settings_getter) else None
 
-    def current_render_settings (self) -> observation_overlay_render_settings_t:
+    def current_render_settings (self) -> render_contracts.settings_t:
         getter = self._render_settings_getter
         if not callable (getter):
-            return observation_overlay_render_settings_t ()
+            return render_contracts.settings_t ()
         try:
             settings = getter ()
         except Exception:
-            return observation_overlay_render_settings_t ()
-        if isinstance (settings, observation_overlay_render_settings_t):
+            return render_contracts.settings_t ()
+        if isinstance (settings, render_contracts.settings_t):
             return settings
-        return observation_overlay_render_settings_t ()
+        return render_contracts.settings_t ()
 
-    def block_text_scale (self, block: observation_overlay_block_ui_state_t | None = None) -> float:
-        if not isinstance (block, observation_overlay_block_ui_state_t):
+    def block_text_scale (self, block: panel_state.block_t | None = None) -> float:
+        if not isinstance (block, panel_state.block_t):
             return 1.0
         return self._scale_from_pct (getattr (block, "scale_pct", 100))
 
-    def block_layout_text_scale (self, block: observation_overlay_block_ui_state_t | None = None) -> float:
+    def block_layout_text_scale (self, block: panel_state.block_t | None = None) -> float:
         return float (self.global_text_scale ()) * float (self.block_text_scale (block))
 
     def global_text_scale (self) -> float:
@@ -86,11 +92,11 @@ class observation_overlay_render_spec_factory_t:
         self,
         *,
         base_side_px: float,
-        block: observation_overlay_block_ui_state_t,
+        block: panel_state.block_t,
         image_shape: tuple [int, ...] | None = None,
         visible_bounds_yx: tuple [tuple [float, float], tuple [float, float]] | None = None,
         data_per_screen_px_yx: tuple [float, float] | None = None,
-        viewport_context: observation_viewport_context_t | None = None,
+        viewport_context: update_context.viewport_t | None = None,
     ):
         side = float (base_side_px)
         if not math.isfinite (side) or side <= 0.0:
@@ -193,14 +199,14 @@ class observation_overlay_render_spec_factory_t:
     def hud_spec_for_block (
         self,
         *,
-        block: observation_overlay_block_ui_state_t,
+        block: panel_state.block_t,
         image_shape: tuple [int, ...] | None = None,
         visible_bounds_yx: tuple [tuple [float, float], tuple [float, float]] | None = None,
         nominal_side_px: float | None = None,
         nominal_size_yx: tuple [float, float] | None = None,
         data_per_screen_px_yx: tuple [float, float] | None = None,
-        viewport_context: observation_viewport_context_t | None = None,
-    ) -> observation_overlay_hud_layout_spec_t:
+        viewport_context: update_context.viewport_t | None = None,
+    ) -> render_contracts.hud_layout_spec_t:
         resolved_nominal_size_yx = self._nominal_size_yx (nominal_size_yx)
         nominal_side = 0.0
         if nominal_side_px is not None:
@@ -218,7 +224,7 @@ class observation_overlay_render_spec_factory_t:
                 float (getattr (block, "offset_x_px", 0.0)),
             )
         resolved_text_scale = self.block_layout_text_scale (block)
-        return observation_overlay_hud_layout_spec_t (
+        return render_contracts.hud_layout_spec_t (
             resolved_image_shape,
             resolved_visible_bounds_yx,
             resolved_anchor,
@@ -249,9 +255,9 @@ class observation_overlay_render_spec_factory_t:
     @staticmethod
     def _image_shape (
         image_shape: tuple [int, ...] | None,
-        viewport_context: observation_viewport_context_t | None,
+        viewport_context: update_context.viewport_t | None,
     ) -> tuple [int, ...]:
-        if isinstance (viewport_context, observation_viewport_context_t):
+        if isinstance (viewport_context, update_context.viewport_t):
             shape_yx = getattr (viewport_context, "image_shape_yx", None)
             if isinstance (shape_yx, (tuple, list)) and len (shape_yx) >= 2:
                 return (max (1, int (shape_yx [0])), max (1, int (shape_yx [1])))
@@ -262,11 +268,11 @@ class observation_overlay_render_spec_factory_t:
     @staticmethod
     def _visible_bounds_yx (
         visible_bounds_yx: tuple [tuple [float, float], tuple [float, float]] | None,
-        viewport_context: observation_viewport_context_t | None,
+        viewport_context: update_context.viewport_t | None,
     ) -> tuple [tuple [float, float], tuple [float, float]] | None:
         if visible_bounds_yx is not None:
             return visible_bounds_yx
-        if isinstance (viewport_context, observation_viewport_context_t):
+        if isinstance (viewport_context, update_context.viewport_t):
             bounds_yx = getattr (viewport_context, "visible_bounds_yx", None)
             if isinstance (bounds_yx, (tuple, list)) and len (bounds_yx) >= 2:
                 return (
@@ -278,9 +284,9 @@ class observation_overlay_render_spec_factory_t:
     @staticmethod
     def _viewport_data_per_screen_px_yx (
         data_per_screen_px_yx: tuple [float, float] | None,
-        viewport_context: observation_viewport_context_t | None,
+        viewport_context: update_context.viewport_t | None,
     ) -> tuple [float, float] | None:
-        if isinstance (viewport_context, observation_viewport_context_t):
+        if isinstance (viewport_context, update_context.viewport_t):
             value = getattr (viewport_context, "data_per_screen_px_yx", None)
             if isinstance (value, (tuple, list)) and len (value) >= 2:
                 return (float (value [0]), float (value [1]))
@@ -348,8 +354,8 @@ class observation_overlay_render_spec_factory_t:
     def layer_apply_specs (
         self,
         update_ctx,
-        render_bundle: observation_overlay_render_bundle_t,
-    ) -> tuple [observation_overlay_layer_apply_spec_t, ...]:
+        render_bundle: render_contracts.bundle_t,
+    ) -> tuple [render_contracts.layer_apply_spec_t, ...]:
         empty_scene = self._overlay_scene_manager.combine_components ()
         render_settings = render_bundle.render_settings
         measurement_scene_value = self._scene_or_empty (render_bundle.measurement_scene, empty_scene)
@@ -369,30 +375,30 @@ class observation_overlay_render_spec_factory_t:
             self._scene_or_empty (render_bundle.processing_scene, empty_scene),
             text_scale = self.block_text_scale (render_settings.author_block),
         )
-        return self._layer_apply_spec (
-            layer_bundle = update_ctx.overlay_layer_bundle,
-            base_scene = empty_scene,
-            replace_components = self._full_rebuild_replace_components (),
-            added_scene = self._overlay_scene_manager.combine_components (
+        return self._layer_apply_spec (_layer_apply_spec_request_t (
+            update_ctx.layer_bundle,
+            self._full_rebuild_replace_components (),
+            self._overlay_scene_manager.combine_components (
                 measurement_scene_value,
                 measurement_text_scene_value,
                 compass_scene_value,
                 info_scene_value,
                 processing_scene_value,
             ),
-            layout_side_px = float (render_bundle.observation_layout.square_side_px),
-            render_settings = render_settings,
-        )
+            float (render_bundle.observation_layout.square_side_px),
+            render_settings,
+            empty_scene,
+        ))
 
     def measurement_layer_apply_specs (
         self,
         *,
         update_ctx,
-        render_settings: observation_overlay_render_settings_t,
+        render_settings: render_contracts.settings_t,
         measurement_scene,
         measurement_text_scene,
         processing_scene,
-    ) -> tuple [observation_overlay_layer_apply_spec_t, ...]:
+    ) -> tuple [render_contracts.layer_apply_spec_t, ...]:
         empty_scene = self._overlay_scene_manager.combine_components ()
         measurement_block_scene = self._overlay_scene_manager.combine_components (
             self._scene_or_empty (measurement_scene, empty_scene),
@@ -401,55 +407,55 @@ class observation_overlay_render_spec_factory_t:
                 text_scale = self.block_text_scale (render_settings.measurement_text_block),
             ),
         )
-        return self._layer_apply_spec (
-            layer_bundle = update_ctx.overlay_layer_bundle,
-            replace_components = tuple ([
+        return self._layer_apply_spec (_layer_apply_spec_request_t (
+            update_ctx.layer_bundle,
+            tuple ([
                 *self._overlay_scene_manager.MEASUREMENT_COMPONENTS,
                 *self._legacy_cleanup_components (),
             ]),
-            added_scene = measurement_block_scene,
-            layout_side_px = float (update_ctx.observation_layout.square_side_px),
-            render_settings = render_settings,
-        )
+            measurement_block_scene,
+            float (update_ctx.observation_layout.square_side_px),
+            render_settings,
+        ))
 
     def author_layer_apply_specs (
         self,
         update_ctx,
-        render_settings: observation_overlay_render_settings_t,
+        render_settings: render_contracts.settings_t,
         processing_scene,
-    ) -> tuple [observation_overlay_layer_apply_spec_t, ...]:
+    ) -> tuple [render_contracts.layer_apply_spec_t, ...]:
         empty_scene = self._overlay_scene_manager.combine_components ()
-        return self._layer_apply_spec (
-            layer_bundle = update_ctx.overlay_layer_bundle,
-            replace_components = tuple ([
+        return self._layer_apply_spec (_layer_apply_spec_request_t (
+            update_ctx.layer_bundle,
+            tuple ([
                 *self._overlay_scene_manager.AUTHOR_COMPONENTS,
                 *self._legacy_cleanup_components (),
             ]),
-            added_scene = self._scene_with_text_scale (
+            self._scene_with_text_scale (
                 self._scene_or_empty (processing_scene, empty_scene),
                 text_scale = self.block_text_scale (render_settings.author_block),
             ),
-            layout_side_px = float (update_ctx.observation_layout.square_side_px),
-            render_settings = render_settings,
-        )
+            float (update_ctx.observation_layout.square_side_px),
+            render_settings,
+        ))
 
     def compass_info_layer_apply_specs (
         self,
         *,
         update_ctx,
-        render_settings: observation_overlay_render_settings_t,
+        render_settings: render_contracts.settings_t,
         compass_scene,
         info_scene,
-    ) -> tuple [observation_overlay_layer_apply_spec_t, ...]:
+    ) -> tuple [render_contracts.layer_apply_spec_t, ...]:
         empty_scene = self._overlay_scene_manager.combine_components ()
-        return self._layer_apply_spec (
-            layer_bundle = update_ctx.overlay_layer_bundle,
-            replace_components = tuple ([
+        return self._layer_apply_spec (_layer_apply_spec_request_t (
+            update_ctx.layer_bundle,
+            tuple ([
                 *self._overlay_scene_manager.SUN_COMPASS_COMPONENTS,
                 *self._overlay_scene_manager.INFO_COMPONENTS,
                 *self._legacy_cleanup_components (),
             ]),
-            added_scene = self._overlay_scene_manager.combine_components (
+            self._overlay_scene_manager.combine_components (
                 self._scene_with_text_scale (
                     self._scene_or_empty (compass_scene, empty_scene),
                     text_scale = self.block_text_scale (render_settings.compass_block),
@@ -459,39 +465,36 @@ class observation_overlay_render_spec_factory_t:
                     text_scale = self.block_text_scale (render_settings.info_block),
                 ),
             ),
-            layout_side_px = float (update_ctx.observation_layout.square_side_px),
-            render_settings = render_settings,
-        )
+            float (update_ctx.observation_layout.square_side_px),
+            render_settings,
+        ))
 
     def _layer_apply_spec (
         self,
-        *,
-        layer_bundle,
-        replace_components = tuple ([
-        ]),
-        base_scene = None,
-        added_scene = None,
-        layout_side_px: float,
-        render_settings: observation_overlay_render_settings_t | None = None,
-    ) -> tuple [observation_overlay_layer_apply_spec_t, ...]:
-        if not isinstance (base_scene, observation_overlay_scene_t):
-            base_scene = getattr (layer_bundle, "base_scene", observation_overlay_scene_t.empty ())
-        replace_components = tuple (replace_components)
-        if not isinstance (added_scene, observation_overlay_scene_t):
-            added_scene = observation_overlay_scene_t.empty ()
+        request: _layer_apply_spec_request_t,
+    ) -> tuple [render_contracts.layer_apply_spec_t, ...]:
+        layer_bundle = request.layer_bundle
+        base_scene = request.base_scene
+        if not isinstance (base_scene, scene_model.scene_t):
+            base_scene = getattr (layer_bundle, "base_scene", scene_model.scene_t.empty ())
+        replace_components = tuple (request.replace_components)
+        added_scene = request.added_scene
+        if not isinstance (added_scene, scene_model.scene_t):
+            added_scene = scene_model.scene_t.empty ()
+        render_settings = request.render_settings
         text_scale = (
             self.global_text_scale ()
-            if not isinstance (render_settings, observation_overlay_render_settings_t)
+            if not isinstance (render_settings, render_contracts.settings_t)
             else self._scale_from_pct (getattr (render_settings, "text_scale_pct", 100))
         )
         return (
-            observation_overlay_layer_apply_spec_t (
+            render_contracts.layer_apply_spec_t (
                 base_scene,
                 replace_components,
                 added_scene,
-                layout_side_px = float (layout_side_px),
+                layout_side_px = float (request.layout_side_px),
                 text_base_size_px = self._overlay_scene_manager.normalized_text_base_size_px (
-                    text_scale = text_scale,
+                    text_scale,
                 ),
                 source_layer_key = str(getattr(layer_bundle, "source_layer_key", "") or ""),
                 source_layer = getattr(layer_bundle, "source_layer", None),
@@ -541,7 +544,7 @@ class observation_overlay_render_spec_factory_t:
         *,
         text_scale: float,
     ):
-        if not isinstance (scene, observation_overlay_scene_t):
+        if not isinstance (scene, scene_model.scene_t):
             return scene
         try:
             scale = float (text_scale)

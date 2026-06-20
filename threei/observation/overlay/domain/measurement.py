@@ -2,23 +2,20 @@
 # Licensed under the MIT License
 from __future__ import annotations
 
+import threei.observation.overlay.scene_model as scene_model
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
 from threei.observation.overlay.entities import label_t, overlay_shape_writer_t
-from threei.observation.overlay.models import (
-    observation_overlay_hud_layout_spec_t,
-    observation_overlay_layout_t,
-    observation_overlay_scene_t,
-)
+import threei.observation.overlay.render_contracts as render_contracts
 from threei.observation.overlay.scene.hud_geometry import (
     hud_block_top_left_yx,
     hud_data_per_screen_px_yx,
     hud_visible_rect_yx,
 )
 from threei.observation.overlay.shapes import (
-    observation_overlay_component_ids_t,
-    observation_overlay_style_t,
+    observation_component_ids_t,
+    observation_style_t,
 )
 
 if TYPE_CHECKING:
@@ -27,22 +24,28 @@ if TYPE_CHECKING:
 
 @dataclass (slots = True, frozen = True)
 class observation_measurement_component_build_t:
-    scene: observation_overlay_scene_t
+    scene: scene_model.scene_t
     fits_in_layout: bool
 
 
 @dataclass (slots = True, frozen = True)
 class observation_measurement_group_build_t:
-    scene: Optional[observation_overlay_scene_t]
+    scene: Optional[scene_model.scene_t]
     fits_in_layout: bool
 
 
 @dataclass(frozen=True, slots=True)
-class processing_label_request_t:
-    scene: observation_overlay_scene_t
-    layout: observation_overlay_layout_t
+class observation_measurement_texts_t:
     size_text: str
     processing_text: str
+
+
+@dataclass(frozen=True, slots=True)
+class processing_label_request_t:
+    scene: scene_model.scene_t
+    layout: scene_model.layout_t
+    measurement_texts: observation_measurement_texts_t
+
 
 class observation_measurement_overlay_component_t:
     MEASUREMENT_CORNER_LEN_PX = 16.0
@@ -53,9 +56,9 @@ class observation_measurement_overlay_component_t:
         *,
         shape_writer: overlay_shape_writer_t,
         text_layout: observation_text_block_layout_t,
-        create_empty_scene: Callable[[], observation_overlay_scene_t],
-        component_ids: observation_overlay_component_ids_t,
-        style: observation_overlay_style_t,
+        create_empty_scene: Callable[[], scene_model.scene_t],
+        component_ids: observation_component_ids_t,
+        style: observation_style_t,
     ):
         self._shape_writer = shape_writer
         self._text_layout = text_layout
@@ -65,7 +68,7 @@ class observation_measurement_overlay_component_t:
 
     def build_measurement_component_with_fit (
         self,
-        layout: observation_overlay_layout_t,
+        layout: scene_model.layout_t,
         size_text: str = "",
         line_width_scale: float = 1.0,
     ) -> observation_measurement_component_build_t:
@@ -80,37 +83,35 @@ class observation_measurement_overlay_component_t:
 
     def build_measurement_border_component (
         self,
-        layout: observation_overlay_layout_t,
+        layout: scene_model.layout_t,
         line_width_scale: float = 1.0,
-    ) -> observation_overlay_scene_t:
+    ) -> scene_model.scene_t:
         scene = self._create_empty_scene ()
         self._emit_measurement_corners (scene, layout, line_width_scale)
         return scene
 
     def build_processing_component (
         self,
-        layout: observation_overlay_layout_t,
-        size_text: str = "",
-        processing_text: str = "",
-    ) -> observation_overlay_scene_t:
+        layout: scene_model.layout_t,
+        measurement_texts: observation_measurement_texts_t,
+    ) -> scene_model.scene_t:
         scene = self._create_empty_scene ()
         processing_label_request = processing_label_request_t(
             scene,
             layout,
-            size_text,
-            processing_text,
+            measurement_texts,
         )
         self._emit_processing_label(processing_label_request)
         return scene
 
     def build_measurement_size_hud_component (
         self,
-        hud_layout: observation_overlay_hud_layout_spec_t,
+        hud_layout: render_contracts.hud_layout_spec_t,
         size_text: str = "",
-        area_layout: observation_overlay_layout_t | None = None,
-    ) -> observation_overlay_scene_t:
-        if not isinstance (hud_layout, observation_overlay_hud_layout_spec_t):
-            raise TypeError ("hud_layout must be observation_overlay_hud_layout_spec_t")
+        area_layout: scene_model.layout_t | None = None,
+    ) -> scene_model.scene_t:
+        if not isinstance (hud_layout, render_contracts.hud_layout_spec_t):
+            raise TypeError ("hud_layout must be render_contracts.hud_layout_spec_t")
         scene = self._create_empty_scene ()
         raw_text = str (size_text or "").strip ()
         if not raw_text:
@@ -133,17 +134,15 @@ class observation_measurement_overlay_component_t:
 
     def build_processing_hud_component (
         self,
-        hud_layout: observation_overlay_hud_layout_spec_t,
-        size_text: str = "",
-        processing_text: str = "",
-    ) -> observation_overlay_scene_t:
-        if not isinstance (hud_layout, observation_overlay_hud_layout_spec_t):
-            raise TypeError ("hud_layout must be observation_overlay_hud_layout_spec_t")
+        hud_layout: render_contracts.hud_layout_spec_t,
+        measurement_texts: observation_measurement_texts_t,
+    ) -> scene_model.scene_t:
+        if not isinstance (hud_layout, render_contracts.hud_layout_spec_t):
+            raise TypeError ("hud_layout must be render_contracts.hud_layout_spec_t")
         scene = self._create_empty_scene ()
-        raw_text = str (processing_text or "").strip ()
+        raw_text = str (measurement_texts.processing_text or "").strip ()
         if not raw_text:
             return scene
-        del size_text
         processing_anchor_yx = self._processing_hud_origin_yx (hud_layout, raw_text)
         if processing_anchor_yx is None:
             return scene
@@ -157,7 +156,7 @@ class observation_measurement_overlay_component_t:
 
     def _processing_hud_origin_yx (
         self,
-        hud_layout: observation_overlay_hud_layout_spec_t,
+        hud_layout: render_contracts.hud_layout_spec_t,
         processing_text: str,
     ) -> tuple [float, float] | None:
         lines = self._processing_hud_lines (processing_text)
@@ -175,8 +174,8 @@ class observation_measurement_overlay_component_t:
 
     def _emit_processing_hud_text_block (
         self,
-        scene: observation_overlay_scene_t,
-        hud_layout: observation_overlay_hud_layout_spec_t,
+        scene: scene_model.scene_t,
+        hud_layout: render_contracts.hud_layout_spec_t,
         anchor_yx: tuple [float, float],
         processing_text: str,
     ) -> None:
@@ -205,7 +204,7 @@ class observation_measurement_overlay_component_t:
 
     def measurement_text_anchor_positions (
         self,
-        hud_layout: observation_overlay_hud_layout_spec_t,
+        hud_layout: render_contracts.hud_layout_spec_t,
         size_text: str,
         processing_text: str,
     ) -> tuple [tuple [float, float] | None, tuple [float, float] | None]:
@@ -230,7 +229,7 @@ class observation_measurement_overlay_component_t:
 
     def measurement_hud_origin_yx (
         self,
-        hud_layout: observation_overlay_hud_layout_spec_t,
+        hud_layout: render_contracts.hud_layout_spec_t,
         size_text: str,
         processing_text: str,
     ) -> tuple [float, float]:
@@ -239,7 +238,7 @@ class observation_measurement_overlay_component_t:
 
     def _measurement_text_block_size_px (
         self,
-        hud_layout: observation_overlay_hud_layout_spec_t,
+        hud_layout: render_contracts.hud_layout_spec_t,
         size_text: str,
         processing_text: str,
     ) -> tuple [float, float]:
@@ -279,8 +278,8 @@ class observation_measurement_overlay_component_t:
 
     def _emit_measurement_corners (
         self,
-        scene: observation_overlay_scene_t,
-        layout: observation_overlay_layout_t,
+        scene: scene_model.scene_t,
+        layout: scene_model.layout_t,
         line_width_scale: float = 1.0,
     ) -> None:
         top = float (layout.corner_nw_yx [0])
@@ -319,8 +318,8 @@ class observation_measurement_overlay_component_t:
 
     def _emit_size_label (
         self,
-        scene: observation_overlay_scene_t,
-        layout: observation_overlay_layout_t,
+        scene: scene_model.scene_t,
+        layout: scene_model.layout_t,
         size_text: str,
     ) -> None:
         raw_text = str (size_text or "").strip ()
@@ -345,12 +344,12 @@ class observation_measurement_overlay_component_t:
         ).emit (scene, self._shape_writer)
 
     def _emit_processing_label(self, request: processing_label_request_t) -> None:
-        raw_text = str (request.processing_text or "").strip ()
+        raw_text = str (request.measurement_texts.processing_text or "").strip ()
         if not raw_text:
             return
         bottom = float (request.layout.corner_se_yx [0])
         right = float (request.layout.corner_se_yx [1])
-        size_text_width, _size_text_height = self._text_layout.estimate_block_size_px (str (request.size_text or "").strip ())
+        size_text_width, _size_text_height = self._text_layout.estimate_block_size_px (str (request.measurement_texts.size_text or "").strip ())
         if float (size_text_width) > 0.0:
             anchor_x = float (right) - float (size_text_width)
         else:
@@ -371,7 +370,7 @@ class observation_measurement_overlay_component_t:
             "bottom",
         ).emit (request.scene, self._shape_writer)
 
-    def _measurement_corner_len (self, layout: observation_overlay_layout_t) -> float:
+    def _measurement_corner_len (self, layout: scene_model.layout_t) -> float:
         top = float (layout.corner_nw_yx [0])
         left = float (layout.corner_nw_yx [1])
         bottom = float (layout.corner_se_yx [0])
@@ -388,19 +387,19 @@ class observation_measurement_overlay_component_t:
 
     def _hud_block_top_left_yx (
         self,
-        hud_layout: observation_overlay_hud_layout_spec_t,
+        hud_layout: render_contracts.hud_layout_spec_t,
         block_width_px: float,
         block_height_px: float,
     ) -> tuple [float, float]:
         return hud_block_top_left_yx (
             hud_layout,
-            block_width_px = block_width_px,
-            block_height_px = block_height_px,
+            block_width_px,
+            block_height_px,
         )
 
     @staticmethod
     def _hud_visible_rect (
-        hud_layout: observation_overlay_hud_layout_spec_t,
+        hud_layout: render_contracts.hud_layout_spec_t,
     ) -> tuple [float, float, float, float]:
         return hud_visible_rect_yx (hud_layout)
 
@@ -410,8 +409,8 @@ class observation_measurement_group_component_t:
         self,
         *,
         measurement_component: observation_measurement_overlay_component_t,
-        create_empty_scene: Callable[[], observation_overlay_scene_t],
-        component_ids: observation_overlay_component_ids_t,
+        create_empty_scene: Callable[[], scene_model.scene_t],
+        component_ids: observation_component_ids_t,
     ):
         self._measurement_component = measurement_component
         self._create_empty_scene = create_empty_scene
@@ -419,7 +418,7 @@ class observation_measurement_group_component_t:
 
     def build_with_fit (
         self,
-        layout: observation_overlay_layout_t,
+        layout: scene_model.layout_t,
         size_text: str = "",
     ) -> observation_measurement_group_build_t:
         measurement_build = self._measurement_component.build_measurement_component_with_fit (layout, size_text)
@@ -435,7 +434,7 @@ class observation_measurement_group_component_t:
             resolved_fits_in_layout_2,
         )
 
-    def _to_group_scene (self, source: observation_overlay_scene_t) -> observation_overlay_scene_t:
+    def _to_group_scene (self, source: scene_model.scene_t) -> scene_model.scene_t:
         grouped = self._create_empty_scene ()
         count = int (len (source.shapes))
         for idx in range (count):

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import numpy as np
-from qtpy.QtCore import QTimer
 
 from threei.processing.ls import (
     ls_classic_runtime_t,
-    ls_ghost_aware_runtime_t,
     resolve_rotation_backend,
     resolve_clip_limits,
 )
@@ -16,32 +14,33 @@ from threei.ui.common.provenance import (
     provenance_pending_step_metadata,
     provenance_step_t,
 )
-from threei.ui.common.viewport import layer_view_window_yx
+from threei.ui.common.viewport import layer_canvas_view_window_yx, layer_view_window_yx
 from threei.ui.filters.ls.classic_runtime import (
     _ls_filter_runtime_state_t,
     _ls_roi_display_state_t,
 )
 from threei.ui.filters.ls.display import contrast_limits_for
 from threei.ui.filters.ls.extra_layers import ls_extra_layer_manager_t
-from threei.ui.filters.ls.ghost_aware import compute_ghost_aware_image
+from threei.ui.filters.ls.mags import compute_mags_image
 from threei.ui.filters.ls.params import _ls_request_params_t
-from threei.ui.image_tools.widget_controller import (
-    filter_compute_request_t,
-    filter_compute_result_t,
-    filter_widget_controller_t,
+from threei.ui.derived_image.widget_controller import (
+    derived_image_compute_request_t,
+    derived_image_compute_result_t,
+    derived_image_widget_controller_t,
 )
+from threei.ui.layers.metadata_policy import derived_image_metadata_from_source
 from threei.ui.layers import (
     image_layer_adapter_t,
     image_layer_display_owner_t,
 )
 
 
-class ls_widget_controller_t(filter_widget_controller_t):
+class ls_widget_controller_t(derived_image_widget_controller_t):
     _ROI_MODE_KEY = "_ls_roi_mode"
     _ROI_MODE_VIEWPORT = "viewport"
-    _MODE_PREVIEW = "preview"
-    _MODE_ROI = "roi"
-    VIEWPORT_DEBOUNCE_MS = 120
+    _MODE_PREVIEW = derived_image_widget_controller_t.PREVIEW_MODE
+    _MODE_ROI = derived_image_widget_controller_t.ROI_MODE
+    VIEWPORT_PREVIEW_DEBOUNCE_MS = 120
     PARAMETER_ROI_DEBOUNCE_MS = 500
 
     def __init__(self, **kwargs):
@@ -49,17 +48,7 @@ class ls_widget_controller_t(filter_widget_controller_t):
         self.runtime_full = ls_classic_runtime_t(max_workers=2)
         self.runtime_preview = ls_classic_runtime_t(max_workers=2)
         self.runtime_roi = ls_classic_runtime_t(max_workers=2)
-        self.ghost_runtime_full = ls_ghost_aware_runtime_t(max_workers=4)
-        self.ghost_runtime_preview = ls_ghost_aware_runtime_t(max_workers=4)
-        self.ghost_runtime_roi = ls_ghost_aware_runtime_t(max_workers=4)
         self.debounce_timer.setInterval(self.PARAMETER_ROI_DEBOUNCE_MS)
-        self.viewport_debounce_timer = QTimer()
-        self.viewport_debounce_timer.setSingleShot(True)
-        self.viewport_debounce_timer.setInterval(self.VIEWPORT_DEBOUNCE_MS)
-        self.viewport_debounce_timer.timeout.connect(self._submit_viewport_from_latest)
-        self._viewport_event_sources = []
-        self._preview_active = False
-        self._preview_pending_request: filter_compute_request_t | None = None
         self._latest_roi_applied_seq = 0
         self._ls_cleanup_done = False
         self.filter_state = _ls_filter_runtime_state_t()
@@ -69,7 +58,6 @@ class ls_widget_controller_t(filter_widget_controller_t):
             viewer=self.viewer,
             output_name_getter=lambda: self.output_name,
         )
-        self._connect_viewport_events()
 
     def mark_base_dirty(self):
         with self.state_lock:
@@ -79,8 +67,7 @@ class ls_widget_controller_t(filter_widget_controller_t):
     def preview_window_for_request(self, request, source_data):
         params = _ls_request_params_t.from_request(request)
         if str(request.get(self._ROI_MODE_KEY, "")).strip().lower() == self._ROI_MODE_VIEWPORT:
-            view_window = layer_view_window_yx(
-                self.viewer,
+            view_window = self._viewport_window_for_layer(
                 request["base_layer"],
                 source_data.shape,
                 min_size_px=int(params.preview_size),
@@ -90,7 +77,15 @@ class ls_widget_controller_t(filter_widget_controller_t):
         return self._preview_window_for(
             source_data.shape,
             params.preview_size,
-            params.center,
+            params.target_center_yx,
+        )
+
+    def roi_window_for_request(self, request, source_data):
+        params = _ls_request_params_t.from_request(request)
+        return self._viewport_window_for_layer(
+            request["base_layer"],
+            source_data.shape,
+            min_size_px=int(params.preview_size),
         )
 
     def compute_image(
@@ -109,7 +104,7 @@ class ls_widget_controller_t(filter_widget_controller_t):
         selected_runtime = self.runtime_full
         clip_cache = self.filter_state.full
         active_work_data = base_data
-        work_center = params.center
+        work_center = params.target_center_yx
         active_preview_window = preview_window
         output_window = None
 
@@ -118,7 +113,7 @@ class ls_widget_controller_t(filter_widget_controller_t):
                 active_preview_window = self._preview_window_for(
                     base_data.shape,
                     params.preview_size,
-                    params.center,
+                    params.target_center_yx,
                 )
             if active_preview_window is not None:
                 if mode == self._MODE_ROI:
@@ -130,26 +125,25 @@ class ls_widget_controller_t(filter_widget_controller_t):
                 output_window = active_preview_window
 
         if params.mode == "ghost_aware":
-            selected_ghost_runtime = self.ghost_runtime_full
-            if mode == self._MODE_PREVIEW:
-                selected_ghost_runtime = self.ghost_runtime_preview
-            elif mode == self._MODE_ROI:
-                selected_ghost_runtime = self.ghost_runtime_roi
-            result = compute_ghost_aware_image(
+            rotation_backend = resolve_rotation_backend(params.rotation_backend)
+            result = compute_mags_image(
                 params,
                 run_mode=mode,
                 active_work_data=active_work_data,
                 work_center=work_center,
                 output_window_yx=output_window,
-                runtime=selected_ghost_runtime,
-                rotation_backend=params.rotation_backend,
+                rotation_backend=rotation_backend.used,
             )
-            result["metadata"] = self._result_metadata(
+            metadata = self._result_metadata(
                 output_window,
-                params=params,
-                mode=mode,
-                rotation_backend=selected_ghost_runtime.last_rotation_backend,
+                params,
+                mode,
+                rotation_backend,
             )
+            mags_metadata = result.get("metadata")
+            if isinstance(mags_metadata, dict):
+                metadata.update(mags_metadata)
+            result["metadata"] = metadata
             return result
 
         base_signature = (
@@ -247,9 +241,9 @@ class ls_widget_controller_t(filter_widget_controller_t):
             "contrast_limits": contrast_limits,
             "metadata": self._result_metadata(
                 output_window,
-                params=params,
-                mode=mode,
-                rotation_backend=selected_runtime.last_rotation_backend,
+                params,
+                mode,
+                selected_runtime.last_rotation_backend,
             ),
         }
 
@@ -258,30 +252,14 @@ class ls_widget_controller_t(filter_widget_controller_t):
             return
         self._ls_cleanup_done = True
         super().cleanup()
-        try:
-            self.viewport_debounce_timer.stop()
-        except Exception:
-            pass
-        self._disconnect_viewport_events()
-        if self.compute_manager is not None and self.job_key is not None:
-            self.compute_manager.invalidate((self.job_key, self._MODE_ROI))
-        with self.state_lock:
-            self._preview_active = False
-            self._preview_pending_request = None
         self.runtime_full.close()
         self.runtime_preview.close()
         self.runtime_roi.close()
-        self.ghost_runtime_full.close()
-        self.ghost_runtime_preview.close()
-        self.ghost_runtime_roi.close()
         self.extra_layers.cleanup()
 
     def _apply(self, result):
         if getattr(self, "_disposed", False):
             return
-        if self._apply_roi_result(result):
-            return
-
         stable_result = self._stable_result(result)
         super()._apply(stable_result)
         if str(stable_result.mode) != "full":
@@ -298,36 +276,26 @@ class ls_widget_controller_t(filter_widget_controller_t):
         source_layer = self.current_base_layer() or self.base_layer
         self.extra_layers.sync_result_layers(source_layer, stable_result)
 
-    def _apply_roi_result(self, result) -> bool:
+    def _accept_result_locked(self, result, mode: str, seq: int) -> bool:
+        del result
+        if str(mode) == self.PREVIEW_MODE and seq <= int(self._latest_roi_applied_seq):
+            return False
+        if str(mode) == self.ROI_MODE:
+            self._latest_roi_applied_seq = max(int(self._latest_roi_applied_seq), int(seq))
+        return True
+
+    def _apply_windowed_result(self, result, source_adapter) -> bool:
         if getattr(self, "_disposed", False):
             return True
         mode = str(result.mode)
-        if mode not in {self._MODE_PREVIEW, self._MODE_ROI}:
+        if mode not in {self.PREVIEW_MODE, self.ROI_MODE}:
             return False
         preview_window = result.preview_window
         if preview_window is None:
             return False
 
-        seq = int(result.seq)
-        source_layer = self.current_base_layer() or self.base_layer
-        source_adapter = image_layer_adapter_t(source_layer)
         if not source_adapter.is_valid:
             return True
-
-        with self.state_lock:
-            latest_seq = int(self.runtime_state.latest_request_seq)
-            latest_full_seq = int(self.runtime_state.latest_full_applied_seq)
-            latest_roi_seq = int(self._latest_roi_applied_seq)
-            if mode == self._MODE_ROI and seq < latest_seq:
-                return True
-            if seq <= latest_full_seq:
-                return True
-            if mode == self._MODE_PREVIEW and seq <= latest_roi_seq:
-                return True
-            if mode == self._MODE_ROI:
-                self._latest_roi_applied_seq = max(latest_roi_seq, seq)
-            self.runtime_state.latest_preview_window = preview_window
-            self.runtime_state.latest_preview_source_layer_key = source_adapter.layer_key
 
         roi_image = self._stable_display_image(result.image)
         contrast_limits = result.get("contrast_limits")
@@ -336,8 +304,8 @@ class ls_widget_controller_t(filter_widget_controller_t):
             roi_image,
             preview_window,
             contrast_limits,
-            mode=mode,
-            result=result,
+            mode,
+            result,
         )
         add_kwargs = source_adapter.build_add_image_kwargs(
             name=self.output_name,
@@ -349,9 +317,13 @@ class ls_widget_controller_t(filter_widget_controller_t):
             add_kwargs=add_kwargs,
         )
         out_layer = update_result.layer
+        if update_result.created and not update_result.replaced:
+            with self.state_lock:
+                self.runtime_state.output_layer_created_from_windowed_result = True
+        source_metadata = derived_image_metadata_from_source(source_adapter)
         if update_result.created:
-            out_layer.metadata = source_adapter.metadata_copy()
-        self._apply_result_metadata(out_layer, result, source_adapter.metadata_copy())
+            out_layer.metadata = source_metadata
+        self._apply_result_metadata(out_layer, result, source_metadata)
         self._configure_roi_bounding_box(out_layer, visible=True)
         if update_result.created and not update_result.replaced:
             if contrast_limits is not None:
@@ -362,8 +334,8 @@ class ls_widget_controller_t(filter_widget_controller_t):
         return True
 
     @classmethod
-    def _stable_result(cls, result) -> filter_compute_result_t:
-        return filter_compute_result_t(
+    def _stable_result(cls, result) -> derived_image_compute_result_t:
+        return derived_image_compute_result_t(
             cls._stable_display_image(result.image),
             str(result.mode),
             result.preview_window,
@@ -381,7 +353,6 @@ class ls_widget_controller_t(filter_widget_controller_t):
         roi_image,
         preview_window,
         contrast_limits,
-        *,
         mode: str,
         result,
     ) -> np.ndarray:
@@ -526,26 +497,29 @@ class ls_widget_controller_t(filter_widget_controller_t):
             return
         self._submit_viewport_from_latest()
 
-    def _submit_viewport_from_latest(self):
-        if getattr(self, "_disposed", False):
-            return
-        latest = self._latest_request()
-        if latest is None:
-            return
+    def _viewport_submit_mode(self) -> str:
+        return self.ROI_MODE
+
+    def _viewport_request_from_latest(
+        self,
+        latest: derived_image_compute_request_t,
+    ) -> derived_image_compute_request_t | None:
         if self._can_reuse_current_roi_for_viewport(latest):
-            return
+            return None
         payload = dict(latest.payload) if isinstance(latest.payload, dict) else {}
         payload[self._ROI_MODE_KEY] = self._ROI_MODE_VIEWPORT
         latest.payload = payload
-        self._submit_request(latest, self._MODE_ROI)
+        return latest
 
-    def _can_reuse_current_roi_for_viewport(self, request: filter_compute_request_t) -> bool:
+    def _can_reuse_current_roi_for_viewport(
+        self,
+        request: derived_image_compute_request_t,
+    ) -> bool:
         source_adapter = image_layer_adapter_t(request.base_layer)
         source_data = source_adapter.data_array()
         if source_data is None:
             return False
-        requested_window = layer_view_window_yx(
-            self.viewer,
+        requested_window = self._viewport_window_for_layer(
             request.base_layer,
             source_data.shape,
             min_size_px=int(request.preview_size),
@@ -557,6 +531,28 @@ class ls_widget_controller_t(filter_widget_controller_t):
                 return False
             current_window = self.filter_state.roi_window
         return self._window_contains(current_window, requested_window)
+
+    def _viewport_window_for_layer(
+        self,
+        layer,
+        image_shape,
+        *,
+        min_size_px: int,
+    ) -> tuple[int, int, int, int] | None:
+        canvas_window = layer_canvas_view_window_yx(
+            self.viewer,
+            layer,
+            image_shape,
+            min_size_px=min_size_px,
+        )
+        if canvas_window is not None:
+            return canvas_window
+        return layer_view_window_yx(
+            self.viewer,
+            layer,
+            image_shape,
+            min_size_px=min_size_px,
+        )
 
     @staticmethod
     def _window_contains(
@@ -581,6 +577,7 @@ class ls_widget_controller_t(filter_widget_controller_t):
         if getattr(self, "_disposed", False):
             return
         normalized_request = self._normalize_request(request)
+        self._connect_viewport_layer_events(normalized_request.base_layer)
         with self.state_lock:
             self.runtime_state.latest_request_seq += 1
             normalized_request.seq = int(self.runtime_state.latest_request_seq)
@@ -590,155 +587,13 @@ class ls_widget_controller_t(filter_widget_controller_t):
             self._submit_request(normalized_request, "full")
             return
 
-        self.compute_manager.invalidate((self.job_key, self._MODE_ROI))
+        self.compute_manager.invalidate((self.job_key, self.ROI_MODE))
         self._queue_preview_request(normalized_request)
         self.debounce_timer.start()
-
-    def _queue_preview_request(self, request: filter_compute_request_t) -> None:
-        if getattr(self, "_disposed", False):
-            return
-        request_copy = self._copy_request(request)
-        with self.state_lock:
-            if self._preview_active:
-                self._preview_pending_request = request_copy
-                return
-            self._preview_active = True
-
-        self._submit_request(request_copy, self._MODE_PREVIEW)
-
-    def _submit_request(self, request, mode):
-        if getattr(self, "_disposed", False):
-            return
-        if (
-            str(mode) == self._MODE_PREVIEW
-            and self.compute_manager is not None
-            and self.job_key is not None
-        ):
-            resolved_job_key = (self.job_key, self._MODE_PREVIEW)
-            resolved_task_fn = lambda: self._compute_for(request, self._MODE_PREVIEW)
-            self.compute_manager.submit_latest(
-                resolved_job_key,
-                resolved_task_fn,
-                self._apply_preview_result,
-                self._on_preview_error,
-            )
-            return
-
-        super()._submit_request(request, mode)
-
-    def _apply_preview_result(self, result) -> None:
-        if getattr(self, "_disposed", False):
-            return
-        try:
-            self._apply(result)
-        finally:
-            self._finish_preview_request()
-
-    def _on_preview_error(self, exc) -> None:
-        if getattr(self, "_disposed", False):
-            return
-        try:
-            self._on_error(exc)
-        finally:
-            self._finish_preview_request()
-
-    def _finish_preview_request(self) -> None:
-        if getattr(self, "_disposed", False):
-            return
-        next_request = None
-        with self.state_lock:
-            if self._preview_pending_request is None:
-                self._preview_active = False
-                return
-            next_request = self._preview_pending_request
-            self._preview_pending_request = None
-            self._preview_active = True
-
-        self._submit_request(next_request, self._MODE_PREVIEW)
-
-    @staticmethod
-    def _copy_request(request: filter_compute_request_t) -> filter_compute_request_t:
-        return filter_compute_request_t(
-            request.base_layer,
-            int(request.preview_size),
-            int(request.seq),
-            dict(request.payload) if isinstance(request.payload, dict) else {},
-        )
-
-    def _compute_for(self, request, mode):
-        if getattr(self, "_disposed", False):
-            raise RuntimeError("LS controller is disposed")
-        if str(mode) != self._MODE_ROI:
-            return super()._compute_for(request, mode)
-
-        current_base_layer = request.base_layer
-        source_adapter = image_layer_adapter_t(current_base_layer)
-        source_data = source_adapter.data_array()
-        if source_data is None:
-            raise RuntimeError("base layer is not available")
-
-        preview_window = self.preview_window_for_request(request, source_data)
-        payload = self.compute_image(
-            request,
-            self._MODE_ROI,
-            source_data,
-            source_data,
-            preview_window,
-        )
-        if isinstance(payload, dict):
-            result_data = dict(payload)
-        else:
-            result_data = {"image": payload}
-
-        if "image" not in result_data:
-            raise RuntimeError("compute_image() must return image")
-
-        resolved_image = result_data.pop("image")
-        return filter_compute_result_t(
-            resolved_image,
-            self._MODE_ROI,
-            preview_window,
-            int(request.seq),
-            result_data,
-        )
-
-    def _on_viewport_changed(self, *args, **kwargs):
-        del args, kwargs
-        if getattr(self, "_disposed", False):
-            return
-        if self.compute_manager is None or self.job_key is None:
-            return
-        self.viewport_debounce_timer.start()
-
-    def _connect_viewport_events(self):
-        events = getattr(getattr(self.viewer, "camera", None), "events", None)
-        if events is None:
-            return
-        for event_name in ("center", "zoom"):
-            event_source = getattr(events, event_name, None)
-            connect = getattr(event_source, "connect", None)
-            if callable(connect):
-                try:
-                    connect(self._on_viewport_changed)
-                    self._viewport_event_sources.append(event_source)
-                except Exception:
-                    pass
-
-    def _disconnect_viewport_events(self):
-        event_sources = tuple(self._viewport_event_sources)
-        self._viewport_event_sources.clear()
-        for event_source in event_sources:
-            disconnect = getattr(event_source, "disconnect", None)
-            if callable(disconnect):
-                try:
-                    disconnect(self._on_viewport_changed)
-                except Exception:
-                    pass
 
     @staticmethod
     def _result_metadata(
         output_window: tuple[int, int, int, int] | None,
-        *,
         params: _ls_request_params_t,
         mode: str,
         rotation_backend=None,
@@ -760,7 +615,7 @@ class ls_widget_controller_t(filter_widget_controller_t):
             )
         metadata.update(provenance_pending_step_metadata(
             provenance_step_t(
-                kind=PROVENANCE_KIND_DATA,
+                PROVENANCE_KIND_DATA,
                 stage="ls",
                 method=str(params.mode),
                 summary=ls_widget_controller_t._provenance_summary(

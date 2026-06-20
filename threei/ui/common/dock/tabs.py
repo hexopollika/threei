@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from threei.ui.common.dock.layout import rebalance_visible_docks_by_content
 from threei.ui.common.dock.palette import apply_tab_bar_style, register_tab_accent
 from threei.ui.common.dock.runtime_sync import (
     install_qt_window_tab_style_sync,
@@ -81,6 +82,7 @@ def add_tabbed_dock_widget(
             selected=bool(selected),
         )
     refresh_viewer_tab_style(viewer)
+    rebalance_visible_docks_by_content(qt_window, area)
     return dock
 
 

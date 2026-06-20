@@ -48,8 +48,11 @@ class image_layer_display_owner_t:
         layer_name = str(name)
         existing_layer = self._layer_by_name(layer_name)
         if existing_layer is None:
+            resolved_kwargs = dict(add_kwargs)
+            contrast_limits = resolved_kwargs.pop("contrast_limits", None)
             with napari_layer_insert_guard_t(self.viewer):
-                layer = self.viewer.add_image(data, **dict(add_kwargs))
+                layer = self.viewer.add_image(data, **resolved_kwargs)
+            self._apply_contrast_limits(layer, contrast_limits)
             return image_layer_update_result_t(layer, created=True)
 
         desired_geometry = image_layer_geometry_t(
@@ -61,22 +64,21 @@ class image_layer_display_owner_t:
         if current_geometry == desired_geometry:
             self._upsert_same_geometry_data(
                 existing_layer,
-                data=data,
-                geometry=desired_geometry,
+                data,
+                desired_geometry,
             )
             return image_layer_update_result_t(existing_layer)
 
         return self.replace_geometry(
             existing_layer,
-            data=data,
-            add_kwargs=add_kwargs,
-            preserve_existing_visuals=preserve_existing_visuals,
+            data,
+            add_kwargs,
+            preserve_existing_visuals,
         )
 
     def replace_geometry(
         self,
         existing_layer,
-        *,
         data,
         add_kwargs: dict,
         preserve_existing_visuals: bool = True,
@@ -85,6 +87,7 @@ class image_layer_display_owner_t:
         resolved_kwargs = dict(add_kwargs)
         if preserve_existing_visuals:
             self._copy_visual_controls(existing_layer, resolved_kwargs)
+        contrast_limits = resolved_kwargs.pop("contrast_limits", None)
 
         previous_active_layer = active_layer(self.viewer)
         stale_name = self._stale_name_for(layer_name)
@@ -100,6 +103,7 @@ class image_layer_display_owner_t:
         resolved_kwargs["name"] = layer_name
         with napari_layer_insert_guard_t(self.viewer, restore_active=False):
             new_layer = self.viewer.add_image(data, **resolved_kwargs)
+        self._apply_contrast_limits(new_layer, contrast_limits)
         self.remove_layer(existing_layer)
         if previous_active_layer is existing_layer:
             restore_active_layer(self.viewer, new_layer)
@@ -126,20 +130,18 @@ class image_layer_display_owner_t:
     def _upsert_same_geometry_data(
         self,
         layer,
-        *,
         data,
         geometry: image_layer_geometry_t,
     ) -> None:
         del geometry
         self._apply_same_geometry_data(
             layer,
-            data=data,
+            data,
         )
 
     def _apply_same_geometry_data(
         self,
         layer,
-        *,
         data,
     ) -> None:
         layer.data = data
@@ -213,10 +215,20 @@ class image_layer_display_owner_t:
         return (y, x)
 
     @staticmethod
+    def _apply_contrast_limits(layer, contrast_limits) -> None:
+        if contrast_limits is None:
+            return
+        try:
+            layer.contrast_limits = contrast_limits
+        except Exception:
+            pass
+
+    @staticmethod
     def _copy_visual_controls(source_layer, add_kwargs: dict) -> None:
         for attr, key in (
             ("colormap", "colormap"),
-            ("interpolation", "interpolation"),
+            ("interpolation2d", "interpolation2d"),
+            ("interpolation3d", "interpolation3d"),
             ("gamma", "gamma"),
             ("opacity", "opacity"),
             ("blending", "blending"),
@@ -228,13 +240,9 @@ class image_layer_display_owner_t:
             if value is not None:
                 add_kwargs[key] = value
 
-        contrast_limits = None
-        for attr in ("contrast_limits_range", "contrast_limits"):
-            try:
-                contrast_limits = getattr(source_layer, attr)
-            except Exception:
-                continue
-            if contrast_limits is not None:
-                break
+        try:
+            contrast_limits = getattr(source_layer, "contrast_limits")
+        except Exception:
+            contrast_limits = None
         if contrast_limits is not None:
             add_kwargs["contrast_limits"] = contrast_limits

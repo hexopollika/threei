@@ -8,32 +8,30 @@ try:
 except Exception:
     QTimer = None
 
-from threei.observation.overlay.models import (
-    observation_overlay_block_ui_state_t,
-    observation_overlay_ui_state_t,
-)
+import threei.observation.overlay.panel_state as panel_state
+import threei.ui.observation.panel_state_mapping as panel_state_mapping
 from threei.ui.observation.panel_widgets import (
-    observation_overlay_block_widgets_t,
-    observation_overlay_panel_widgets_t,
+    observation_block_widgets_t,
+    observation_panel_widgets_t,
 )
 
 
-class observation_overlay_settings_controller_t:
+class observation_settings_controller_t:
     _REBUILD_DEBOUNCE_MS = 75
     _SCALE_REBUILD_DEBOUNCE_MS = 180
 
     def __init__(
         self,
         *,
-        widgets: observation_overlay_panel_widgets_t,
+        widgets: observation_panel_widgets_t,
         normalize_square_side: Callable[[object], int],
         normalize_font_family: Callable[[str | None], str],
         normalize_visible: Callable[[object], bool],
         normalize_anchor: Callable[[object], str],
         normalize_scale_pct: Callable[[object], int],
         normalize_offset_px: Callable[[object], int],
-        get_ui_state: Callable[[], observation_overlay_ui_state_t],
-        set_ui_state: Callable[[observation_overlay_ui_state_t], None],
+        get_ui_state: Callable[[], panel_state.root_t],
+        set_ui_state: Callable[[panel_state.root_t], None],
         is_restoring_layer_ui_state: Callable[[], bool],
         remember_active_layer_ui_state: Callable[[], None],
         active_image_adapter: Callable[[], object],
@@ -42,19 +40,18 @@ class observation_overlay_settings_controller_t:
         rebuild_measurement_overlays_for_layer: Callable[..., None] | None = None,
         rebuild_author_overlays_for_layer: Callable[..., None] | None = None,
         rebuild_compass_info_overlays_for_layer: Callable[..., None] | None = None,
+        state_mapper: panel_state_mapping.mapper_t | None = None,
     ):
         self._widgets = widgets
-        self._normalize_square_side = normalize_square_side
-        self._normalize_measurement_area_size = (
-            normalize_measurement_area_size
-            if callable(normalize_measurement_area_size)
-            else normalize_square_side
+        self._state_mapper = state_mapper or panel_state_mapping.mapper_t(
+            normalize_square_side=normalize_square_side,
+            normalize_measurement_area_size=normalize_measurement_area_size,
+            normalize_font_family=normalize_font_family,
+            normalize_visible=normalize_visible,
+            normalize_anchor=normalize_anchor,
+            normalize_scale_pct=normalize_scale_pct,
+            normalize_offset_px=normalize_offset_px,
         )
-        self._normalize_font_family = normalize_font_family
-        self._normalize_visible = normalize_visible
-        self._normalize_anchor = normalize_anchor
-        self._normalize_scale_pct = normalize_scale_pct
-        self._normalize_offset_px = normalize_offset_px
         self._get_ui_state = get_ui_state
         self._set_ui_state = set_ui_state
         self._is_restoring_layer_ui_state = is_restoring_layer_ui_state
@@ -81,7 +78,7 @@ class observation_overlay_settings_controller_t:
         self._rebuild_timer = self._create_rebuild_timer()
 
     def on_square_side_changed(self) -> None:
-        value = self._normalize_square_side(self._widgets.square_side_widget.value)
+        value = self._state_mapper.normalize_square_side(self._widgets.square_side_widget.value)
         if self._widgets.square_side_widget.value != value:
             self._widgets.square_side_widget.value = value
             return
@@ -95,8 +92,8 @@ class observation_overlay_settings_controller_t:
         self.on_measurement_area_size_changed()
 
     def on_measurement_area_size_changed(self) -> None:
-        width = self._normalize_measurement_area_size(self._widgets.measurement_area_width_widget.value)
-        height = self._normalize_measurement_area_size(self._widgets.measurement_area_height_widget.value)
+        width = self._state_mapper.normalize_measurement_area_size(self._widgets.measurement_area_width_widget.value)
+        height = self._state_mapper.normalize_measurement_area_size(self._widgets.measurement_area_height_widget.value)
         if self._widgets.measurement_area_width_widget.value != width:
             self._widgets.measurement_area_width_widget.value = width
             return
@@ -122,7 +119,7 @@ class observation_overlay_settings_controller_t:
         self._trigger_measurement_rebuild_if_needed()
 
     def on_text_scale_changed(self) -> None:
-        value = int(self._normalize_scale_pct(self._widgets.text_scale_widget.value))
+        value = int(self._state_mapper.normalize_scale_pct(self._widgets.text_scale_widget.value))
         if self._widgets.text_scale_widget.value != value:
             self._widgets.text_scale_widget.value = value
             return
@@ -133,7 +130,7 @@ class observation_overlay_settings_controller_t:
         self._trigger_scale_rebuild_if_needed()
 
     def on_compass_scale_changed(self) -> None:
-        value = int(self._normalize_scale_pct(self._widgets.compass_scale_widget.value))
+        value = int(self._state_mapper.normalize_scale_pct(self._widgets.compass_scale_widget.value))
         if self._widgets.compass_scale_widget.value != value:
             self._widgets.compass_scale_widget.value = value
             return
@@ -144,7 +141,7 @@ class observation_overlay_settings_controller_t:
         self._trigger_compass_info_rebuild_if_needed()
 
     def on_compass_weight_changed(self) -> None:
-        value = int(self._normalize_scale_pct(self._widgets.compass_weight_widget.value))
+        value = int(self._state_mapper.normalize_scale_pct(self._widgets.compass_weight_widget.value))
         if self._widgets.compass_weight_widget.value != value:
             self._widgets.compass_weight_widget.value = value
             return
@@ -155,7 +152,7 @@ class observation_overlay_settings_controller_t:
         self._trigger_compass_info_rebuild_if_needed()
 
     def on_measurement_area_visibility_changed(self) -> None:
-        value = bool(self._normalize_visible(self._widgets.measurement_area_visible_widget.value))
+        value = bool(self._state_mapper.normalize_visible(self._widgets.measurement_area_visible_widget.value))
         if self._widgets.measurement_area_visible_widget.value != value:
             self._widgets.measurement_area_visible_widget.value = value
             return
@@ -166,7 +163,7 @@ class observation_overlay_settings_controller_t:
         self._trigger_measurement_rebuild_if_needed()
 
     def on_measurement_area_weight_changed(self) -> None:
-        value = int(self._normalize_scale_pct(self._widgets.measurement_area_weight_widget.value))
+        value = int(self._state_mapper.normalize_scale_pct(self._widgets.measurement_area_weight_widget.value))
         if self._widgets.measurement_area_weight_widget.value != value:
             self._widgets.measurement_area_weight_widget.value = value
             return
@@ -257,7 +254,7 @@ class observation_overlay_settings_controller_t:
         )
 
     def on_font_changed(self) -> None:
-        value = self._normalize_font_family(self._widgets.font_widget.value)
+        value = self._state_mapper.normalize_font_family(self._widgets.font_widget.value)
         if self._widgets.font_widget.value != value:
             self._widgets.font_widget.value = value
             return
@@ -296,7 +293,7 @@ class observation_overlay_settings_controller_t:
 
     def on_show_display_line_changed(self) -> None:
         widget = getattr(self._widgets, "show_display_line_widget", None)
-        value = bool(self._normalize_visible(getattr(widget, "value", True)))
+        value = bool(self._state_mapper.normalize_visible(getattr(widget, "value", True)))
         if widget is not None and getattr(widget, "value", None) != value:
             widget.value = value
             return
@@ -327,10 +324,10 @@ class observation_overlay_settings_controller_t:
         self._schedule_rebuild(
             layer_adapter,
             resolved_mode,
-            debounce_ms=self._SCALE_REBUILD_DEBOUNCE_MS,
+            self._SCALE_REBUILD_DEBOUNCE_MS,
         )
 
-    def _trigger_measurement_rebuild_if_needed(self, *, debounce_ms: int | None = None) -> None:
+    def _trigger_measurement_rebuild_if_needed(self, debounce_ms: int | None = None) -> None:
         if self._is_restoring_layer_ui_state():
             return
         self._remember_active_layer_ui_state()
@@ -338,9 +335,9 @@ class observation_overlay_settings_controller_t:
         if not getattr(layer_adapter, "is_valid", False):
             return
         resolved_mode = "measurement"
-        self._schedule_rebuild(layer_adapter, resolved_mode, debounce_ms = debounce_ms)
+        self._schedule_rebuild(layer_adapter, resolved_mode, debounce_ms)
 
-    def _trigger_author_rebuild_if_needed(self, *, debounce_ms: int | None = None) -> None:
+    def _trigger_author_rebuild_if_needed(self, debounce_ms: int | None = None) -> None:
         if self._is_restoring_layer_ui_state():
             return
         self._remember_active_layer_ui_state()
@@ -348,9 +345,9 @@ class observation_overlay_settings_controller_t:
         if not getattr(layer_adapter, "is_valid", False):
             return
         resolved_mode = "author"
-        self._schedule_rebuild(layer_adapter, resolved_mode, debounce_ms = debounce_ms)
+        self._schedule_rebuild(layer_adapter, resolved_mode, debounce_ms)
 
-    def _trigger_compass_info_rebuild_if_needed(self, *, debounce_ms: int | None = None) -> None:
+    def _trigger_compass_info_rebuild_if_needed(self, debounce_ms: int | None = None) -> None:
         if self._is_restoring_layer_ui_state():
             return
         self._remember_active_layer_ui_state()
@@ -358,7 +355,7 @@ class observation_overlay_settings_controller_t:
         if not getattr(layer_adapter, "is_valid", False):
             return
         resolved_mode = "compass_info"
-        self._schedule_rebuild(layer_adapter, resolved_mode, debounce_ms = debounce_ms)
+        self._schedule_rebuild(layer_adapter, resolved_mode, debounce_ms)
 
     def cleanup(self) -> None:
         timer = self._rebuild_timer
@@ -374,27 +371,19 @@ class observation_overlay_settings_controller_t:
     def _normalized_block_from_widgets(
         self,
         *,
-        block_widgets: observation_overlay_block_widgets_t,
-        fallback: observation_overlay_block_ui_state_t,
-    ) -> observation_overlay_block_ui_state_t:
+        block_widgets: observation_block_widgets_t,
+        fallback: panel_state.block_t,
+    ) -> panel_state.block_t:
         fallback_state = (
             fallback
-            if isinstance(fallback, observation_overlay_block_ui_state_t)
-            else observation_overlay_block_ui_state_t()
+            if isinstance(fallback, panel_state.block_t)
+            else panel_state.block_t()
         )
-        visible_widget = block_widgets.visible_widget
-        anchor_widget = block_widgets.anchor_widget
-        offset_x_widget = block_widgets.offset_x_widget
-        offset_y_widget = block_widgets.offset_y_widget
-        scale_widget = block_widgets.scale_widget
-        normalized = observation_overlay_block_ui_state_t(
-            visible=bool(self._normalize_visible(getattr(visible_widget, "value", fallback_state.visible))),
-            anchor=str(self._normalize_anchor(getattr(anchor_widget, "value", fallback_state.anchor))),
-            scale_pct=int(self._normalize_scale_pct(getattr(scale_widget, "value", fallback_state.scale_pct))),
-            offset_x_px=int(self._normalize_offset_px(getattr(offset_x_widget, "value", fallback_state.offset_x_px))),
-            offset_y_px=int(self._normalize_offset_px(getattr(offset_y_widget, "value", fallback_state.offset_y_px))),
+        normalized = self._state_mapper.block_state_from_widgets(
+            block_widgets,
+            fallback_state,
         )
-        self._apply_block_state_to_widgets(
+        self._state_mapper.restore_block_state_to_widgets(
             block_widgets,
             normalized,
         )
@@ -404,16 +393,13 @@ class observation_overlay_settings_controller_t:
         self,
         *,
         block_attr: str,
-        block_widgets: observation_overlay_block_widgets_t,
+        block_widgets: observation_block_widgets_t,
     ) -> None:
         state = self._get_ui_state()
         fallback_state = getattr(state, block_attr)
-        normalized = observation_overlay_block_ui_state_t(
-            visible=bool(self._normalize_visible(getattr(block_widgets.visible_widget, "value", fallback_state.visible))),
-            anchor=str(self._normalize_anchor(getattr(block_widgets.anchor_widget, "value", fallback_state.anchor))),
-            scale_pct=int(self._normalize_scale_pct(getattr(block_widgets.scale_widget, "value", fallback_state.scale_pct))),
-            offset_x_px=0,
-            offset_y_px=0,
+        normalized = self._state_mapper.block_position_preset_from_widgets(
+            block_widgets,
+            fallback_state,
         )
         self._apply_block_state(
             block_attr,
@@ -424,11 +410,11 @@ class observation_overlay_settings_controller_t:
     def _apply_block_state(
         self,
         block_attr: str,
-        block_widgets: observation_overlay_block_widgets_t,
-        normalized: observation_overlay_block_ui_state_t,
+        block_widgets: observation_block_widgets_t,
+        normalized: panel_state.block_t,
     ) -> None:
         state = self._get_ui_state()
-        self._apply_block_state_to_widgets(
+        self._state_mapper.restore_block_state_to_widgets(
             block_widgets,
             normalized,
         )
@@ -446,22 +432,6 @@ class observation_overlay_settings_controller_t:
             return
         self._trigger_rebuild_if_needed()
 
-    def _apply_block_state_to_widgets(
-        self,
-        block_widgets: observation_overlay_block_widgets_t,
-        state: observation_overlay_block_ui_state_t,
-    ) -> None:
-        if getattr(block_widgets.visible_widget, "value", None) != state.visible:
-            block_widgets.visible_widget.value = state.visible
-        if getattr(block_widgets.anchor_widget, "value", None) != state.anchor:
-            block_widgets.anchor_widget.value = state.anchor
-        if getattr(block_widgets.scale_widget, "value", None) != state.scale_pct:
-            block_widgets.scale_widget.value = state.scale_pct
-        if getattr(block_widgets.offset_x_widget, "value", None) != state.offset_x_px:
-            block_widgets.offset_x_widget.value = state.offset_x_px
-        if getattr(block_widgets.offset_y_widget, "value", None) != state.offset_y_px:
-            block_widgets.offset_y_widget.value = state.offset_y_px
-
     def _create_rebuild_timer(self):
         timer_cls = QTimer
         if timer_cls is None:
@@ -474,7 +444,7 @@ class observation_overlay_settings_controller_t:
         except Exception:
             return None
 
-    def _schedule_rebuild(self, layer_adapter, mode: str, *, debounce_ms: int | None = None) -> None:
+    def _schedule_rebuild(self, layer_adapter, mode: str, debounce_ms: int | None = None) -> None:
         self._pending_rebuild_layer_adapter = layer_adapter
         self._pending_rebuild_mode = str(mode or "full")
         timer = self._rebuild_timer

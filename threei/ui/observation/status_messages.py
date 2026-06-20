@@ -6,7 +6,7 @@ from __future__ import annotations
 class observation_status_messages_t:
     @staticmethod
     def select_fits_layer () -> str:
-        return "Select FITS image layer, then click Build Overlay."
+        return "Select FITS image layer, then click Enable."
 
     @staticmethod
     def ready (layer_name: str) -> str:
@@ -25,8 +25,8 @@ class observation_status_messages_t:
         return "Invalid image data for overlays."
 
     @staticmethod
-    def cannot_create_overlay_layer () -> str:
-        return "Cannot create observation overlay layer."
+    def cannot_prepare_overlay_context () -> str:
+        return "Cannot prepare observation overlay context."
 
     @staticmethod
     def cannot_resolve_wcs_time () -> str:
@@ -75,7 +75,7 @@ class observation_status_messages_t:
         return "Info label updated."
 
     @staticmethod
-    def overlay_reset () -> str:
-        return "Observation overlay reset."
+    def overlay_disabled () -> str:
+        return "Observation overlay disabled."
 
 

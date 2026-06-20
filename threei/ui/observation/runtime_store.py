@@ -2,14 +2,14 @@
 # Licensed under the MIT License
 from __future__ import annotations
 
+import threei.observation.overlay.scene_model as scene_model
 from dataclasses import dataclass
-from threei.observation.overlay.models import observation_overlay_scene_t
 
 
 @dataclass(slots=True)
 class observation_layer_runtime_t:
     source_layer_key: str
-    current_scene: observation_overlay_scene_t
+    current_scene: scene_model.scene_t
     generation: int = 0
 
 
@@ -19,12 +19,12 @@ class observation_runtime_store_t:
     def __init__(self):
         self._runtime_by_source_key: dict[str, observation_layer_runtime_t] = {}
 
-    def current_scene(self, source_layer_key: str) -> observation_overlay_scene_t | None:
+    def current_scene(self, source_layer_key: str) -> scene_model.scene_t | None:
         runtime = self.get(source_layer_key)
         if runtime is None:
             return None
         scene = runtime.current_scene
-        return scene if isinstance(scene, observation_overlay_scene_t) else None
+        return scene if isinstance(scene, scene_model.scene_t) else None
 
     def get(self, source_layer_key: str) -> observation_layer_runtime_t | None:
         key = self._normalize_key(source_layer_key)
@@ -34,22 +34,17 @@ class observation_runtime_store_t:
 
     def set_current_scene(
         self,
-        *,
         source_layer_key: str,
-        scene: observation_overlay_scene_t,
+        scene: scene_model.scene_t,
     ) -> observation_layer_runtime_t | None:
         key = self._normalize_key(source_layer_key)
         if not key:
             return None
-        if not isinstance(scene, observation_overlay_scene_t):
+        if not isinstance(scene, scene_model.scene_t):
             return None
         previous = self._runtime_by_source_key.get(key)
         generation = 1 if previous is None else int(previous.generation) + 1
-        runtime = observation_layer_runtime_t(
-            source_layer_key=key,
-            current_scene=scene,
-            generation=generation,
-        )
+        runtime = observation_layer_runtime_t(key, scene, generation)
         self._runtime_by_source_key[key] = runtime
         return runtime
 

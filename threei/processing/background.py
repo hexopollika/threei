@@ -125,8 +125,8 @@ def subtract_background (
         image,
         box_size,
         filter_size,
-        mask = mask,
-        sigma = sigma,
-        maxiters = maxiters,
-        exclude_percentile = exclude_percentile,
+        mask,
+        sigma,
+        maxiters,
+        exclude_percentile,
     ).image

@@ -15,7 +15,7 @@ from threei.processing.ls.models import (
 )
 
 
-def rotation_matrix(angle_rad: float, dtype=np.float64) -> np.ndarray:
+def rotation_matrix(angle_rad: float, dtype: Any = np.float64) -> np.ndarray:
     cos_a = np.cos(float(angle_rad))
     sin_a = np.sin(float(angle_rad))
     return np.array([[cos_a, sin_a], [-sin_a, cos_a]], dtype=dtype)
@@ -64,15 +64,6 @@ def source_window_view(
         return source
     y0, y1, x0, x1 = window
     return source[y0:y1, x0:x1]
-
-
-def rotate_image(
-    image: np.ndarray,
-    center_yx: tuple[float, float],
-    angle_deg: float,
-    order: int,
-) -> np.ndarray:
-    return rotate_image_window(image, center_yx, angle_deg, order, None)
 
 
 def rotate_image_window(

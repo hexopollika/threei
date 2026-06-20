@@ -8,13 +8,18 @@ from magicgui import magicgui
 
 from threei.processing.denoise import denoise_structures
 from threei.processing.denoise import preview_denoise_method
-from threei.ui.image_tools.widget_controller import (
-    filter_panel_base_t,
-    filter_widget_controller_t,
+from threei.ui.common.provenance import (
+    PROVENANCE_KIND_DATA,
+    provenance_pending_step_metadata,
+    provenance_step_t,
+)
+from threei.ui.derived_image.widget_controller import (
+    derived_image_panel_base_t,
+    derived_image_widget_controller_t,
 )
 
 
-class denoise_widget_controller_t (filter_widget_controller_t):
+class denoise_widget_controller_t (derived_image_widget_controller_t):
     def compute_image (
         self,
         request,
@@ -27,21 +32,82 @@ class denoise_widget_controller_t (filter_widget_controller_t):
         compute_method = params.method
         if str (mode) == "preview":
             compute_method = preview_denoise_method (params.method)
+        active_work_data = work_data
+        active_window = preview_window
+        display_window = preview_window
+        if self._is_windowed_mode (mode) and preview_window is not None:
+            active_window = self._expanded_window (
+                preview_window,
+                source_data.shape,
+                self._window_halo_for (params),
+            )
+            y0, y1, x0, x1 = active_window
+            active_work_data = source_data [y0:y1, x0:x1]
         image = denoise_structures (
-            work_data,
+            active_work_data,
             compute_method,
             nlm_h_factor = params.nlm_h_factor,
             tv_weight = params.tv_weight,
             patch_size = params.patch_size,
             patch_distance = params.patch_distance,
         )
+        if (
+            self._is_windowed_mode (mode)
+            and active_window is not None
+            and display_window is not None
+            and active_window != display_window
+        ):
+            image = self._crop_windowed_result (image, active_window, display_window)
         result = {
             "image": image,
             "denoise_method": params.method,
+            "metadata": provenance_pending_step_metadata (
+                provenance_step_t (
+                    PROVENANCE_KIND_DATA,
+                    stage = "denoise",
+                    method = str (params.method),
+                    summary = f"Denoise {str (params.method)}",
+                    params = {
+                        "method": str (params.method),
+                        "nlm_h_factor": float (params.nlm_h_factor),
+                        "tv_weight": float (params.tv_weight),
+                        "patch_size": int (params.patch_size),
+                        "patch_distance": int (params.patch_distance),
+                    },
+                )
+            ),
         }
         if compute_method != params.method:
             result ["denoise_preview_method"] = compute_method
         return result
+
+    def _is_windowed_mode (self, mode: str) -> bool:
+        return str (mode) in {self.PREVIEW_MODE, self.ROI_MODE}
+
+    def _window_halo_for (self, params: "_denoise_request_params_t") -> int:
+        return int (max (1, params.patch_distance) + max (1, params.patch_size))
+
+    def _expanded_window (self, window, shape, halo: int):
+        if window is None or len (shape) < 2:
+            return window
+        y0, y1, x0, x1 = [int (value) for value in window]
+        image_h = int (shape [0])
+        image_w = int (shape [1])
+        return (
+            max (0, y0 - int (halo)),
+            min (image_h, y1 + int (halo)),
+            max (0, x0 - int (halo)),
+            min (image_w, x1 + int (halo)),
+        )
+
+    def _crop_windowed_result (self, image, active_window, display_window):
+        active_y0, _active_y1, active_x0, _active_x1 = active_window
+        display_y0, display_y1, display_x0, display_x1 = display_window
+        y0 = int (display_y0) - int (active_y0)
+        y1 = int (display_y1) - int (active_y0)
+        x0 = int (display_x0) - int (active_x0)
+        x1 = int (display_x1) - int (active_x0)
+        return image [y0:y1, x0:x1]
 
 
 @dataclass (slots = True, frozen = True)
@@ -113,7 +179,7 @@ class denoise_panel_controller_t:
         ))
 
 
-class denoise_filter_panel_t (filter_panel_base_t):
+class denoise_filter_panel_t (derived_image_panel_base_t):
     controller_cls = denoise_widget_controller_t
     output_suffix = "denoise structures"
 

@@ -2,37 +2,34 @@
 # Licensed under the MIT License
 from __future__ import annotations
 
+import threei.observation.overlay.scene_model as scene_model
 from typing import TYPE_CHECKING
 
-from threei.observation.overlay.models import (
-    observation_overlay_layer_apply_spec_t,
-    observation_overlay_preview_request_t,
-    observation_overlay_preview_result_t,
-    observation_overlay_scene_t,
-)
+import threei.observation.overlay.render_contracts as render_contracts
+import threei.observation.overlay.preview_contracts as preview_contracts
 from threei.ui.observation.overlay_display_owner import (
-    observation_overlay_display_owner_t,
+    observation_display_owner_t,
 )
 from threei.ui.observation.runtime_store import observation_runtime_store_t
 
 if TYPE_CHECKING:
-    from threei.observation.overlay.scene_manager import observation_overlay_scene_manager_t
+    from threei.observation.overlay.scene_manager import observation_scene_manager_t
 
 
-class observation_overlay_apply_controller_t:
+class observation_apply_controller_t:
     def __init__ (
         self,
         *,
-        overlay_scene_manager: observation_overlay_scene_manager_t,
+        overlay_scene_manager: observation_scene_manager_t,
         viewer = None,
         runtime_store: observation_runtime_store_t | None = None,
-        display_owner: observation_overlay_display_owner_t | None = None,
+        display_owner: observation_display_owner_t | None = None,
     ):
         self._overlay_scene_manager = overlay_scene_manager
         self._display_owner = (
             display_owner
-            if isinstance (display_owner, observation_overlay_display_owner_t)
-            else observation_overlay_display_owner_t (
+            if isinstance (display_owner, observation_display_owner_t)
+            else observation_display_owner_t (
                 overlay_scene_manager = overlay_scene_manager,
                 viewer = viewer,
                 runtime_store = runtime_store,
@@ -43,16 +40,16 @@ class observation_overlay_apply_controller_t:
     def merge_and_apply_overlay (
         self,
         *,
-        layer_specs: tuple [observation_overlay_layer_apply_spec_t, ...] = (),
-    ) -> observation_overlay_scene_t:
+        layer_specs: tuple [render_contracts.layer_apply_spec_t, ...] = (),
+    ) -> scene_model.scene_t:
         resolved_specs = tuple (
             spec
             for spec in tuple (layer_specs)
-            if isinstance (spec, observation_overlay_layer_apply_spec_t)
+            if isinstance (spec, render_contracts.layer_apply_spec_t)
         )
         self._last_timings_ms = ()
         if len (resolved_specs) <= 0:
-            return observation_overlay_scene_t.empty ()
+            return scene_model.scene_t.empty ()
         result = self._display_owner.merge_and_apply (
             layer_specs = resolved_specs,
         )
@@ -61,11 +58,11 @@ class observation_overlay_apply_controller_t:
 
     def apply_preview_overlay (
         self,
-        request: observation_overlay_preview_request_t,
-    ) -> observation_overlay_preview_result_t:
+        request: preview_contracts.request_t,
+    ) -> preview_contracts.result_t:
         self._last_timings_ms = ()
-        if not isinstance (request, observation_overlay_preview_request_t):
-            return observation_overlay_preview_result_t.empty (
+        if not isinstance (request, preview_contracts.request_t):
+            return preview_contracts.result_t.empty (
                 reason = "invalid_request",
             )
         result = self._display_owner.apply_preview (request)
@@ -74,11 +71,11 @@ class observation_overlay_apply_controller_t:
 
     def begin_preview_overlay (
         self,
-        request: observation_overlay_preview_request_t,
-    ) -> observation_overlay_preview_result_t:
+        request: preview_contracts.request_t,
+    ) -> preview_contracts.result_t:
         self._last_timings_ms = ()
-        if not isinstance (request, observation_overlay_preview_request_t):
-            return observation_overlay_preview_result_t.empty (
+        if not isinstance (request, preview_contracts.request_t):
+            return preview_contracts.result_t.empty (
                 reason = "invalid_request",
             )
         result = self._display_owner.begin_preview (request)
@@ -88,7 +85,7 @@ class observation_overlay_apply_controller_t:
     def update_preview_overlay (
         self,
         delta_yx: tuple [float, float],
-    ) -> observation_overlay_preview_result_t:
+    ) -> preview_contracts.result_t:
         self._last_timings_ms = ()
         result = self._display_owner.update_preview (
             (float (delta_yx [0]), float (delta_yx [1])),
@@ -100,7 +97,7 @@ class observation_overlay_apply_controller_t:
         self,
         *,
         commit: bool = True,
-    ) -> observation_overlay_preview_result_t:
+    ) -> preview_contracts.result_t:
         self._last_timings_ms = ()
         result = self._display_owner.end_preview (
             commit = bool (commit),

@@ -31,32 +31,11 @@ from threei.ui.common.provenance import (
     provenance_step_t,
 )
 from threei.ui.layers import image_layer_adapter_t
+from threei.ui.layers.metadata_policy import derived_image_metadata
 from threei.ui.super_resolution.runtime import (
     _DEFAULT_VAR_TO_ERR_FLOOR,
     _DEFAULT_VAR_TO_ERR_POLICY,
 )
-
-
-def nanpercentile_limits (image: np.ndarray):
-    finite = np.isfinite (image)
-    if not np.any (finite):
-        return (0.0, 1.0)
-    data = image [finite]
-    lo = float (np.nanpercentile (data, 1.0))
-    hi = float (np.nanpercentile (data, 99.9))
-    if not np.isfinite (lo) or not np.isfinite (hi) or lo == hi:
-        lo = float (np.nanmin (data))
-        hi = float (np.nanmax (data))
-        if not np.isfinite (lo) or not np.isfinite (hi) or lo == hi:
-            return (0.0, 1.0)
-    return (lo, hi)
-
-
-def image_center_yx (image: np.ndarray):
-    shape = np.asarray (image).shape
-    if len (shape) < 2:
-        return (0.0, 0.0)
-    return ((float (shape [0]) - 1.0) * 0.5, (float (shape [1]) - 1.0) * 0.5)
 
 
 def set_sr_layer_metadata (
@@ -81,7 +60,8 @@ def set_sr_layer_metadata (
             getattr (request ["params"], "output_dtype", None),
         )
     )
-    md = dict (request.get ("reference_metadata", {}))
+    reference_metadata = request.get ("reference_metadata", {})
+    md = derived_image_metadata (reference_metadata)
     for key in (
         TARGET_CENTER_YX_KEY,
         TARGET_CENTER_METHOD_KEY,
@@ -110,6 +90,7 @@ def set_sr_layer_metadata (
             "sr_output_dtype_used": _sr_result_image_dtype (sr_result),
             "sr_reference_output_dtype": str (request.get ("reference_output_dtype", "")),
             "sr_accumulation_dtype": "float64",
+            "sr_display_limits_policy": "finite_minmax_no_clip",
             "sr_uncovered_pixels": int (getattr (sr_result, "uncovered_pixels", 0)),
             "sr_uncovered_fraction": float (getattr (sr_result, "uncovered_fraction", 0.0)),
             "sr_zero_weight_pixels": int (getattr (sr_result, "zero_weight_pixels", 0)),
@@ -136,14 +117,23 @@ def set_sr_layer_metadata (
     )
     hr_target_yx = getattr (sr_result, "hr_target_yx", None)
     if isinstance (hr_target_yx, (tuple, list)) and len (hr_target_yx) >= 2:
-        md ["sr_hr_target_yx"] = (float (hr_target_yx [0]), float (hr_target_yx [1]))
+        hr_target_tuple = (float (hr_target_yx [0]), float (hr_target_yx [1]))
+        md ["sr_hr_target_yx"] = hr_target_tuple
+        _set_sr_target_center_metadata (
+            md,
+            request = request,
+            reference_metadata = reference_metadata,
+            hr_target_yx = hr_target_tuple,
+        )
+    else:
+        raise ValueError ("sr_result.hr_target_yx is required")
     fallback_reason = getattr (backend_resolution, "fallback_reason", None)
     if fallback_reason:
         md ["sr_backend_fallback"] = str (fallback_reason)
     append_provenance_step (
         md,
         provenance_step_t (
-            kind = PROVENANCE_KIND_DATA,
+            PROVENANCE_KIND_DATA,
             stage = "mfsr",
             method = str (getattr (backend_resolution, "used", request.get ("sr_backend", "drizzle_reference"))),
             summary = _sr_provenance_summary (task_result, request),
@@ -234,6 +224,100 @@ def _sr_result_image_dtype (sr_result) -> str:
     return str (np.asarray (image).dtype)
 
 
+def _set_sr_target_center_metadata (
+    metadata: dict,
+    *,
+    request,
+    reference_metadata,
+    hr_target_yx: tuple [float, float],
+) -> None:
+    metadata [TARGET_CENTER_YX_KEY] = (
+        float (hr_target_yx [0]),
+        float (hr_target_yx [1]),
+    )
+    metadata [TARGET_CENTER_METHOD_KEY] = _sr_center_method (reference_metadata)
+    metadata [TARGET_CENTER_QUALITY_LABEL_KEY] = _sr_center_quality_label (
+        reference_metadata
+    )
+    metadata [TARGET_CENTER_QUALITY_SCORE_KEY] = _sr_center_quality_score (
+        reference_metadata
+    )
+    metadata [TARGET_CENTER_SEARCH_SIZE_KEY] = _sr_center_search_size_px (
+        request,
+        reference_metadata,
+    )
+    metadata [TARGET_CENTER_MANUAL_CONFIRMED_KEY] = bool (
+        _metadata_value (
+            reference_metadata,
+            TARGET_CENTER_MANUAL_CONFIRMED_KEY,
+            True,
+        )
+    )
+
+
+def _sr_center_method (reference_metadata) -> str:
+    value = str (
+        _metadata_value (reference_metadata, TARGET_CENTER_METHOD_KEY, "manual")
+    ).strip ().lower ()
+    if value in {"seed", "centroid", "centroid+fit", "manual"}:
+        return value
+    return "manual"
+
+
+def _sr_center_quality_label (reference_metadata) -> str:
+    value = str (
+        _metadata_value (reference_metadata, TARGET_CENTER_QUALITY_LABEL_KEY, "good")
+    ).strip ().lower ()
+    if value in {"fail", "weak", "good", "precise"}:
+        return value
+    return "good"
+
+
+def _sr_center_quality_score (reference_metadata) -> float:
+    value = _finite_float (
+        _metadata_value (reference_metadata, TARGET_CENTER_QUALITY_SCORE_KEY, 1.0)
+    )
+    return 1.0 if value is None else float (value)
+
+
+def _sr_center_search_size_px (request, reference_metadata) -> int:
+    source_size = _finite_float (
+        _metadata_value (reference_metadata, TARGET_CENTER_SEARCH_SIZE_KEY, 50)
+    )
+    if source_size is None or source_size <= 0.0:
+        source_size = 50.0
+    return max (1, int (round (source_size * _sr_scale_factor (request))))
+
+
+def _sr_scale_factor (request) -> int:
+    try:
+        return max (1, int (getattr (request ["params"], "scale", 1)))
+    except Exception:
+        return 1
+
+
+def _finite_float (value) -> float | None:
+    try:
+        parsed = float (value)
+    except Exception:
+        return None
+    if not np.isfinite (parsed):
+        return None
+    return float (parsed)
+
+
+def _metadata_value (metadata, key, default = None):
+    if isinstance (metadata, dict):
+        return metadata.get (key, default)
+    getter = getattr (metadata, "get", None)
+    if callable (getter):
+        try:
+            return getter (key, default)
+        except Exception:
+            return default
+    return default
+
+
 def _sr_used_frame_count (task_result) -> int:
     used_specs = task_result.get ("used_specs", ()) if isinstance (task_result, dict) else ()
     try:
@@ -252,35 +336,3 @@ def _sr_output_mode_summary (output_mode: str) -> str:
     if output_mode == SR_OUTPUT_MODE_TARGET_ALIGNED_REFERENCE_FULL:
         return "full"
     return "roi"
-
-
-def upsert_image_layer (
-    viewer,
-    name: str,
-    data: np.ndarray,
-    *,
-    colormap: str,
-    contrast_limits: tuple [float, float],
-    scale: tuple [float, float] | None = None,
-    translate: tuple [float, float] | None = None,
-):
-    layer_name = str (name)
-    if layer_name in viewer.layers:
-        idx = 2
-        while f"{layer_name} [{idx}]" in viewer.layers:
-            idx += 1
-        layer_name = f"{layer_name} [{idx}]"
-
-    add_kwargs = {}
-    if scale is not None:
-        add_kwargs ["scale"] = scale
-    if translate is not None:
-        add_kwargs ["translate"] = translate
-
-    return viewer.add_image (
-        data,
-        name = layer_name,
-        colormap = colormap,
-        contrast_limits = contrast_limits,
-        **add_kwargs,
-    )

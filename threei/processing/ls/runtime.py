@@ -21,44 +21,6 @@ from threei.processing.ls.rotation_backend import (
 )
 
 
-def _rotate_into(
-    image: np.ndarray,
-    out: np.ndarray,
-    angle_rad: float,
-    center: tuple[float, float],
-    order: int = 3,
-    rotation_backend: object = "scipy",
-) -> np.ndarray:
-    return _backend_rotate_into(
-        image,
-        out,
-        angle_rad,
-        center,
-        int(order),
-        backend=rotation_backend,
-    )
-
-
-def _rotate_window_into(
-    image: np.ndarray,
-    out: np.ndarray,
-    angle_rad: float,
-    center: tuple[float, float],
-    output_window_yx: tuple[int, int, int, int],
-    order: int = 3,
-    rotation_backend: object = "scipy",
-) -> np.ndarray:
-    return _backend_rotate_window_into(
-        image,
-        out,
-        angle_rad,
-        center,
-        output_window_yx,
-        int(order),
-        backend=rotation_backend,
-    )
-
-
 class ls_classic_runtime_t:
     """
     Reusable classic LS runtime with preallocated rotation and output buffers.
@@ -134,22 +96,22 @@ class ls_classic_runtime_t:
                 raise RuntimeError("ls_classic_runtime_t buffers are not initialized")
 
             f_pos = self._executor.submit(
-                _rotate_into,
+                _backend_rotate_into,
                 base,
                 rot_p,
                 angle_rad,
                 center,
                 order,
-                backend_resolution.used,
+                backend=backend_resolution.used,
             )
             f_neg = self._executor.submit(
-                _rotate_into,
+                _backend_rotate_into,
                 base,
                 rot_m,
                 -angle_rad,
                 center,
                 order,
-                backend_resolution.used,
+                backend=backend_resolution.used,
             )
             f_pos.result()
             f_neg.result()
@@ -237,24 +199,24 @@ class ls_classic_runtime_t:
                 raise RuntimeError("ls_classic_runtime_t window buffers are not initialized")
 
             f_pos = self._executor.submit(
-                _rotate_window_into,
+                _backend_rotate_window_into,
                 base,
                 rot_p,
                 angle_rad,
                 center,
                 window,
                 order,
-                backend_resolution.used,
+                backend=backend_resolution.used,
             )
             f_neg = self._executor.submit(
-                _rotate_window_into,
+                _backend_rotate_window_into,
                 base,
                 rot_m,
                 -angle_rad,
                 center,
                 window,
                 order,
-                backend_resolution.used,
+                backend=backend_resolution.used,
             )
             f_pos.result()
             f_neg.result()

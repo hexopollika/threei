@@ -2,18 +2,18 @@
 # Licensed under the MIT License
 from __future__ import annotations
 
+import threei.observation.overlay.scene_model as scene_model
 from typing import Callable
 
-from threei.observation.overlay.models import observation_overlay_scene_t
 
 
-class observation_overlay_scene_ops_t:
+class observation_scene_ops_t:
     def __init__ (
         self,
         *,
-        create_empty_scene: Callable[[], observation_overlay_scene_t],
-        append_scene: Callable[[observation_overlay_scene_t, observation_overlay_scene_t], observation_overlay_scene_t],
-        drop_indices: Callable[[observation_overlay_scene_t, set [int], set [str]], observation_overlay_scene_t],
+        create_empty_scene: Callable[[], scene_model.scene_t],
+        append_scene: Callable[[scene_model.scene_t, scene_model.scene_t], scene_model.scene_t],
+        drop_indices: Callable[[scene_model.scene_t, set [int], set [str]], scene_model.scene_t],
     ):
         self._create_empty_scene = create_empty_scene
         self._append_scene = append_scene
@@ -21,8 +21,8 @@ class observation_overlay_scene_ops_t:
 
     def combine_components (
         self,
-        *components: observation_overlay_scene_t,
-    ) -> observation_overlay_scene_t:
+        *components: scene_model.scene_t,
+    ) -> scene_model.scene_t:
         merged = self._create_empty_scene ()
         for component in components:
             merged = self._append_scene (merged, component)
@@ -30,10 +30,10 @@ class observation_overlay_scene_ops_t:
 
     def merge_components_preserving_others (
         self,
-        base_scene: observation_overlay_scene_t,
+        base_scene: scene_model.scene_t,
         replace_components: tuple [str, ...],
-        added_scene: observation_overlay_scene_t,
-    ) -> observation_overlay_scene_t:
+        added_scene: scene_model.scene_t,
+    ) -> scene_model.scene_t:
         replace = {str (name) for name in replace_components}
         remove_indices: set [int] = set ()
         for name in replace:
@@ -44,9 +44,9 @@ class observation_overlay_scene_ops_t:
 
     def keep_components (
         self,
-        scene: observation_overlay_scene_t,
+        scene: scene_model.scene_t,
         component_names: tuple [str, ...],
-    ) -> observation_overlay_scene_t:
+    ) -> scene_model.scene_t:
         keep = {str (name) for name in component_names}
         if len (keep) <= 0:
             return self._create_empty_scene ()
@@ -73,9 +73,9 @@ class observation_overlay_scene_ops_t:
 
     def translate_scene (
         self,
-        scene: observation_overlay_scene_t,
+        scene: scene_model.scene_t,
         delta_yx: tuple [float, float],
-    ) -> observation_overlay_scene_t:
+    ) -> scene_model.scene_t:
         delta_y = float (delta_yx [0])
         delta_x = float (delta_yx [1])
         if abs (delta_y) <= 1.0e-9 and abs (delta_x) <= 1.0e-9:

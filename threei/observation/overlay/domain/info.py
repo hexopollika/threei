@@ -2,6 +2,7 @@
 # Licensed under the MIT License
 from __future__ import annotations
 
+import threei.observation.overlay.scene_model as scene_model
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -9,18 +10,14 @@ from astropy.io import fits
 from astropy.time import Time
 
 from threei.observation.overlay.entities import label_t, overlay_shape_writer_t
-from threei.observation.overlay.models import (
-    observation_overlay_hud_layout_spec_t,
-    observation_overlay_layout_t,
-    observation_overlay_scene_t,
-)
+import threei.observation.overlay.render_contracts as render_contracts
 from threei.observation.overlay.scene.hud_geometry import (
     hud_block_top_left_yx,
     hud_visible_rect_yx,
 )
 from threei.observation.overlay.shapes import (
-    observation_overlay_component_ids_t,
-    observation_overlay_style_t,
+    observation_component_ids_t,
+    observation_style_t,
 )
 
 if TYPE_CHECKING:
@@ -36,13 +33,13 @@ class observation_info_t:
 
 @dataclass (slots = True, frozen = True)
 class observation_info_component_build_t:
-    scene: observation_overlay_scene_t
+    scene: scene_model.scene_t
     fits_in_layout: bool
 
 
 @dataclass (slots = True, frozen = True)
 class observation_info_group_build_t:
-    scene: Optional[observation_overlay_scene_t]
+    scene: Optional[scene_model.scene_t]
     fits_in_layout: bool
 
 
@@ -136,9 +133,9 @@ class observation_info_overlay_component_t:
         *,
         shape_writer: overlay_shape_writer_t,
         text_layout: observation_text_block_layout_t,
-        create_empty_scene: Callable[[], observation_overlay_scene_t],
-        component_ids: observation_overlay_component_ids_t,
-        style: observation_overlay_style_t,
+        create_empty_scene: Callable[[], scene_model.scene_t],
+        component_ids: observation_component_ids_t,
+        style: observation_style_t,
     ):
         self._shape_writer = shape_writer
         self._text_layout = text_layout
@@ -148,7 +145,7 @@ class observation_info_overlay_component_t:
 
     def build_info_component_with_fit (
         self,
-        layout: observation_overlay_layout_t,
+        layout: scene_model.layout_t,
         info_text: str,
         metrics_text: str = "",
     ) -> observation_info_component_build_t:
@@ -159,12 +156,16 @@ class observation_info_overlay_component_t:
         )
         scene = self._create_empty_scene ()
         text = str (info_text or "").strip ()
-        if text:
-            _text_width_px, text_height_px = self._text_layout.estimate_block_size_px (text)
-            info_x = float (safe_left)
-            info_y = float (safe_bottom - float (text_height_px) + float (self.BOTTOM_VISUAL_BIAS_PX))
-            resolved_anchor_yx = (info_y, info_x)
-            resolved_text_scale = 1.0
+        if not text:
+            return observation_info_component_build_t (
+                scene,
+                False,
+            )
+        _text_width_px, text_height_px = self._text_layout.estimate_block_size_px (text)
+        info_x = float (safe_left)
+        info_y = float (safe_bottom - float (text_height_px) + float (self.BOTTOM_VISUAL_BIAS_PX))
+        resolved_anchor_yx = (info_y, info_x)
+        resolved_text_scale = 1.0
         label_t (
             self._component_ids.info_label,
             resolved_anchor_yx,
@@ -182,11 +183,11 @@ class observation_info_overlay_component_t:
 
     def build_info_hud_component (
         self,
-        hud_layout: observation_overlay_hud_layout_spec_t,
+        hud_layout: render_contracts.hud_layout_spec_t,
         info_text: str,
     ) -> observation_info_component_build_t:
-        if not isinstance (hud_layout, observation_overlay_hud_layout_spec_t):
-            raise TypeError ("hud_layout must be observation_overlay_hud_layout_spec_t")
+        if not isinstance (hud_layout, render_contracts.hud_layout_spec_t):
+            raise TypeError ("hud_layout must be render_contracts.hud_layout_spec_t")
         scene = self._create_empty_scene ()
         text = str (info_text or "").strip ()
         if not text:
@@ -211,7 +212,7 @@ class observation_info_overlay_component_t:
 
     def info_hud_origin_yx (
         self,
-        hud_layout: observation_overlay_hud_layout_spec_t,
+        hud_layout: render_contracts.hud_layout_spec_t,
         info_text: str,
     ) -> tuple [float, float]:
         text = str (info_text or "").strip ()
@@ -223,7 +224,7 @@ class observation_info_overlay_component_t:
             block_height_px = float (height_px) * scale,
         )
 
-    def _info_inner_rect (self, layout: observation_overlay_layout_t) -> tuple [float, float, float, float]:
+    def _info_inner_rect (self, layout: scene_model.layout_t) -> tuple [float, float, float, float]:
         padding = float (self.CORNER_PADDING_PX)
         top = float (layout.corner_nw_yx [0]) + padding
         left = float (layout.corner_nw_yx [1]) + padding
@@ -246,19 +247,19 @@ class observation_info_overlay_component_t:
 
     def _hud_text_top_left_yx (
         self,
-        hud_layout: observation_overlay_hud_layout_spec_t,
+        hud_layout: render_contracts.hud_layout_spec_t,
         block_width_px: float,
         block_height_px: float,
     ) -> tuple [float, float]:
         return hud_block_top_left_yx (
             hud_layout,
-            block_width_px = block_width_px,
-            block_height_px = block_height_px,
+            block_width_px,
+            block_height_px,
         )
 
     @staticmethod
     def _hud_visible_rect (
-        hud_layout: observation_overlay_hud_layout_spec_t,
+        hud_layout: render_contracts.hud_layout_spec_t,
     ) -> tuple [float, float, float, float]:
         return hud_visible_rect_yx (hud_layout)
 
@@ -268,8 +269,8 @@ class observation_info_group_component_t:
         self,
         *,
         info_component: observation_info_overlay_component_t,
-        create_empty_scene: Callable[[], observation_overlay_scene_t],
-        component_ids: observation_overlay_component_ids_t,
+        create_empty_scene: Callable[[], scene_model.scene_t],
+        component_ids: observation_component_ids_t,
     ):
         self._info_component = info_component
         self._create_empty_scene = create_empty_scene
@@ -277,7 +278,7 @@ class observation_info_group_component_t:
 
     def build_with_fit (
         self,
-        layout: observation_overlay_layout_t,
+        layout: scene_model.layout_t,
         info_text: str,
         metrics_text: str = "",
     ) -> observation_info_group_build_t:
@@ -294,7 +295,7 @@ class observation_info_group_component_t:
             resolved_fits_in_layout_2,
         )
 
-    def _to_group_scene (self, source: observation_overlay_scene_t) -> observation_overlay_scene_t:
+    def _to_group_scene (self, source: scene_model.scene_t) -> scene_model.scene_t:
         grouped = self._create_empty_scene ()
         count = int (len (source.shapes))
         for idx in range (count):
@@ -376,4 +377,3 @@ class observation_info_group_component_t:
         if 0 <= idx < len (values):
             return values [idx]
         return default
-

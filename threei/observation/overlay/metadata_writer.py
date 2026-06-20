@@ -2,14 +2,12 @@
 # Licensed under the MIT License
 from __future__ import annotations
 
+import threei.observation.overlay.metadata_keys as metadata_keys
+import threei.observation.overlay.scene_model as scene_model
 from threei.ui.layers import image_layer_adapter_t
 from threei.observation.overlay.domain.compass import compass_solution_t
-from threei.observation.overlay.models import (
-    observation_overlay_layout_t,
-    observation_overlay_render_settings_t,
-    observation_overlay_scene_t,
-)
-from threei.observation.overlay.scene_manager import observation_overlay_scene_manager_t
+import threei.observation.overlay.render_contracts as render_contracts
+from threei.observation.overlay.scene_manager import observation_scene_manager_t
 
 
 class observation_metadata_writer_t:
@@ -18,41 +16,41 @@ class observation_metadata_writer_t:
     SCALE_MODE = "match_compass"
     INFO_FIT_MODE = "inside_square_full_block"
 
-    def __init__ (self, overlay_scene_manager: observation_overlay_scene_manager_t):
+    def __init__ (self, overlay_scene_manager: observation_scene_manager_t):
         self.overlay_scene_manager = overlay_scene_manager
 
     def write_common (
         self,
         layer_adapter: image_layer_adapter_t,
-        observation_layout: observation_overlay_layout_t,
-        measurement_area_geometry: observation_overlay_layout_t,
-        scene: observation_overlay_scene_t,
-        render_settings: observation_overlay_render_settings_t | None = None,
+        observation_layout: scene_model.layout_t,
+        measurement_area_geometry: scene_model.layout_t,
+        scene: scene_model.scene_t,
+        render_settings: render_contracts.settings_t | None = None,
     ) -> None:
         layer_adapter.metadata_set (
-            "observation_overlay_square_side_px",
+            metadata_keys.SQUARE_SIDE_PX,
             float (observation_layout.square_side_px),
         )
         layer_adapter.metadata_set (
-            "observation_overlay_measurement_square_side_px",
+            metadata_keys.MEASUREMENT_SQUARE_SIDE_PX,
             float (measurement_area_geometry.square_side_px),
         )
         layer_adapter.metadata_set (
-            "observation_overlay_measurement_area_width_px",
+            metadata_keys.MEASUREMENT_AREA_WIDTH_PX,
             float (abs (measurement_area_geometry.corner_se_yx [1] - measurement_area_geometry.corner_nw_yx [1])),
         )
         layer_adapter.metadata_set (
-            "observation_overlay_measurement_area_height_px",
+            metadata_keys.MEASUREMENT_AREA_HEIGHT_PX,
             float (abs (measurement_area_geometry.corner_se_yx [0] - measurement_area_geometry.corner_nw_yx [0])),
         )
-        layer_adapter.metadata_set ("observation_overlay_layout_corner_policy", self.LAYOUT_CORNER_POLICY)
-        layer_adapter.metadata_set ("observation_direction_basis", self.DIRECTION_BASIS)
-        layer_adapter.metadata_set ("observation_overlay_scale_mode", self.SCALE_MODE)
-        layer_adapter.metadata_set ("observation_info_fit_mode", self.INFO_FIT_MODE)
-        layer_adapter.metadata_set ("observation_overlay_font_family", self.overlay_scene_manager.current_text_font_family ())
-        layer_adapter.metadata_set ("observation_overlay_has_compass", self._has_compass (scene))
-        layer_adapter.metadata_set ("observation_overlay_has_info", self._has_info (scene))
-        if isinstance (render_settings, observation_overlay_render_settings_t):
+        layer_adapter.metadata_set (metadata_keys.LAYOUT_CORNER_POLICY, self.LAYOUT_CORNER_POLICY)
+        layer_adapter.metadata_set (metadata_keys.DIRECTION_BASIS, self.DIRECTION_BASIS)
+        layer_adapter.metadata_set (metadata_keys.SCALE_MODE, self.SCALE_MODE)
+        layer_adapter.metadata_set (metadata_keys.INFO_FIT_MODE, self.INFO_FIT_MODE)
+        layer_adapter.metadata_set (metadata_keys.FONT_FAMILY, self.overlay_scene_manager.current_text_font_family ())
+        layer_adapter.metadata_set (metadata_keys.HAS_COMPASS, self._has_compass (scene))
+        layer_adapter.metadata_set (metadata_keys.HAS_INFO, self._has_info (scene))
+        if isinstance (render_settings, render_contracts.settings_t):
             self._write_render_settings (
                 layer_adapter,
                 render_settings,
@@ -67,14 +65,14 @@ class observation_metadata_writer_t:
         observer_horizons_location_id: str,
         direction_label_text: str,
     ) -> None:
-        layer_adapter.metadata_set ("direction_pa_deg", float (solution.pa_deg))
-        layer_adapter.metadata_set ("observation_target_radec_deg", tuple (solution.target_radec_deg))
-        layer_adapter.metadata_set ("observation_solution_center_yx", tuple (solution.start_yx))
-        layer_adapter.metadata_set ("observation_calc_frame", str (solution.calc_frame))
-        layer_adapter.metadata_set ("observation_observer_source", str (observer_source))
-        layer_adapter.metadata_set ("observation_observer_mode", str (observer_mode))
-        layer_adapter.metadata_set ("observation_horizons_location_id", str (observer_horizons_location_id))
-        layer_adapter.metadata_set ("observation_direction_label", str (direction_label_text))
+        layer_adapter.metadata_set (metadata_keys.DIRECTION_PA_DEG, float (solution.pa_deg))
+        layer_adapter.metadata_set (metadata_keys.TARGET_RADEC_DEG, tuple (solution.target_radec_deg))
+        layer_adapter.metadata_set (metadata_keys.SOLUTION_CENTER_YX, tuple (solution.start_yx))
+        layer_adapter.metadata_set (metadata_keys.CALC_FRAME, str (solution.calc_frame))
+        layer_adapter.metadata_set (metadata_keys.OBSERVER_SOURCE, str (observer_source))
+        layer_adapter.metadata_set (metadata_keys.OBSERVER_MODE, str (observer_mode))
+        layer_adapter.metadata_set (metadata_keys.HORIZONS_LOCATION_ID, str (observer_horizons_location_id))
+        layer_adapter.metadata_set (metadata_keys.DIRECTION_LABEL, str (direction_label_text))
 
     def clear_observation_metadata (
         self,
@@ -83,7 +81,7 @@ class observation_metadata_writer_t:
         for key in self._observation_metadata_keys ():
             layer_adapter.metadata_pop (key, None)
 
-    def _has_compass (self, scene: observation_overlay_scene_t) -> bool:
+    def _has_compass (self, scene: scene_model.scene_t) -> bool:
         if self.overlay_scene_manager.scene_has_component (scene, self.overlay_scene_manager.SUN_COMPASS_GROUP_COMPONENT):
             return True
         return bool (
@@ -91,7 +89,7 @@ class observation_metadata_writer_t:
             and self.overlay_scene_manager.scene_has_component (scene, self.overlay_scene_manager.COMPASS_E_COMPONENT)
         )
 
-    def _has_info (self, scene: observation_overlay_scene_t) -> bool:
+    def _has_info (self, scene: scene_model.scene_t) -> bool:
         if self.overlay_scene_manager.scene_has_component (scene, self.overlay_scene_manager.INFO_GROUP_COMPONENT):
             return True
         return self.overlay_scene_manager.scene_has_component (scene, self.overlay_scene_manager.INFO_LABEL_COMPONENT)
@@ -99,89 +97,59 @@ class observation_metadata_writer_t:
     def _write_render_settings (
         self,
         layer_adapter: image_layer_adapter_t,
-        render_settings: observation_overlay_render_settings_t,
+        render_settings: render_contracts.settings_t,
     ) -> None:
         layer_adapter.metadata_set (
-            "observation_measurement_area_visible",
+            metadata_keys.MEASUREMENT_AREA_VISIBLE,
             bool (render_settings.measurement_area_visible),
         )
         layer_adapter.metadata_set (
-            "observation_measurement_area_weight_pct",
+            metadata_keys.MEASUREMENT_AREA_WEIGHT_PCT,
             int (render_settings.measurement_area_weight_pct),
         )
         layer_adapter.metadata_set (
-            "observation_show_display_line",
+            metadata_keys.SHOW_DISPLAY_LINE,
             bool (getattr (render_settings, "show_display_line", True)),
         )
         layer_adapter.metadata_set (
-            "observation_text_scale_pct",
+            metadata_keys.TEXT_SCALE_PCT,
             int (getattr (render_settings, "text_scale_pct", 100)),
         )
         layer_adapter.metadata_set (
-            "observation_compass_scale_pct",
+            metadata_keys.COMPASS_SCALE_PCT,
             int (getattr (render_settings, "compass_scale_pct", 100)),
         )
         layer_adapter.metadata_set (
-            "observation_compass_weight_pct",
+            metadata_keys.COMPASS_WEIGHT_PCT,
             int (getattr (render_settings, "compass_weight_pct", 100)),
         )
         for prefix, block in (
-            ("observation_measurement_text", render_settings.measurement_text_block),
-            ("observation_compass_block", render_settings.compass_block),
-            ("observation_info_block", render_settings.info_block),
-            ("observation_author_block", render_settings.author_block),
+            (metadata_keys.MEASUREMENT_TEXT_BLOCK_PREFIX, render_settings.measurement_text_block),
+            (metadata_keys.COMPASS_BLOCK_PREFIX, render_settings.compass_block),
+            (metadata_keys.INFO_BLOCK_PREFIX, render_settings.info_block),
+            (metadata_keys.AUTHOR_BLOCK_PREFIX, render_settings.author_block),
         ):
-            layer_adapter.metadata_set (f"{prefix}_visible", bool (getattr (block, "visible", True)))
-            layer_adapter.metadata_set (f"{prefix}_anchor", str (getattr (block, "anchor", "top_left")))
-            layer_adapter.metadata_set (f"{prefix}_scale_pct", int (getattr (block, "scale_pct", 100)))
-            layer_adapter.metadata_set (f"{prefix}_offset_x_px", int (getattr (block, "offset_x_px", 0)))
-            layer_adapter.metadata_set (f"{prefix}_offset_y_px", int (getattr (block, "offset_y_px", 0)))
+            layer_adapter.metadata_set (
+                metadata_keys.block_key (prefix, "visible"),
+                bool (getattr (block, "visible", True)),
+            )
+            layer_adapter.metadata_set (
+                metadata_keys.block_key (prefix, "anchor"),
+                str (getattr (block, "anchor", "top_left")),
+            )
+            layer_adapter.metadata_set (
+                metadata_keys.block_key (prefix, "scale_pct"),
+                int (getattr (block, "scale_pct", 100)),
+            )
+            layer_adapter.metadata_set (
+                metadata_keys.block_key (prefix, "offset_x_px"),
+                int (getattr (block, "offset_x_px", 0)),
+            )
+            layer_adapter.metadata_set (
+                metadata_keys.block_key (prefix, "offset_y_px"),
+                int (getattr (block, "offset_y_px", 0)),
+            )
 
     @staticmethod
     def _observation_metadata_keys () -> tuple[str, ...]:
-        block_keys = tuple (
-            f"{prefix}_{suffix}"
-            for prefix in (
-                "observation_measurement_text",
-                "observation_compass_block",
-                "observation_info_block",
-                "observation_author_block",
-            )
-            for suffix in (
-                "visible",
-                "anchor",
-                "scale_pct",
-                "offset_x_px",
-                "offset_y_px",
-            )
-        )
-        return (
-            "observation_overlay_square_side_px",
-            "observation_overlay_measurement_square_side_px",
-            "observation_overlay_measurement_area_width_px",
-            "observation_overlay_measurement_area_height_px",
-            "observation_overlay_layout_corner_policy",
-            "observation_direction_basis",
-            "observation_overlay_scale_mode",
-            "observation_info_fit_mode",
-            "observation_overlay_font_family",
-            "observation_overlay_has_compass",
-            "observation_overlay_has_info",
-            "direction_pa_deg",
-            "observation_target_radec_deg",
-            "observation_solution_center_yx",
-            "observation_calc_frame",
-            "observation_observer_source",
-            "observation_observer_mode",
-            "observation_horizons_location_id",
-            "observation_direction_label",
-            "observation_measurement_area_visible",
-            "observation_measurement_area_weight_pct",
-            "observation_show_display_line",
-            "observation_text_scale_pct",
-            "observation_compass_scale_pct",
-            "observation_compass_weight_pct",
-            *block_keys,
-        )
-
-
+        return metadata_keys.ALL

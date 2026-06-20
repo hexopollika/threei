@@ -13,6 +13,7 @@ from threei.processing import (
 )
 from threei.processing.target_superres_backends import normalized_sr_drizzle_backend
 from threei.ui.layers import image_layer_adapter_t
+from threei.ui.layers.metadata_policy import derived_image_metadata_from_source
 from threei.ui.super_resolution.layer_queries import (
     ensure_layer_metadata,
     layer_target_center_yx,
@@ -145,7 +146,6 @@ def build_sr_task_request (
     )
 
     reference_colormap = "gray"
-    reference_limits = (0.0, 1.0)
     reference_metadata = {}
     reference_layer_key = ""
     reference_descriptor = None
@@ -154,10 +154,7 @@ def build_sr_task_request (
         reference_adapter = image_layer_adapter_t (resolved_reference_layer)
         reference_layer_key = reference_adapter.layer_key
         reference_colormap = reference_adapter.colormap_name ()
-        limits = reference_adapter.contrast_limits ()
-        if isinstance (limits, (tuple, list, np.ndarray)) and len (limits) >= 2:
-            reference_limits = (float (limits [0]), float (limits [1]))
-        reference_metadata = reference_adapter.metadata_copy ()
+        reference_metadata = derived_image_metadata_from_source (reference_adapter)
         reference_descriptor = _fits_reference_from_layer (resolved_reference_layer)
         reference_output_dtype = _reference_output_dtype (
             reference_descriptor,
@@ -173,7 +170,6 @@ def build_sr_task_request (
         "reference_index": int (reference_index),
         "reference_center_yx": reference_center_yx,
         "reference_colormap": str (reference_colormap),
-        "reference_limits": reference_limits,
         "reference_metadata": reference_metadata,
         "params": params,
         "sr_output_mode": normalized_sr_output_mode (getattr (params, "output_mode", None)),

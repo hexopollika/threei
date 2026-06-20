@@ -2,23 +2,19 @@
 
 3i (`threei`) is a napari-based workspace for inspecting FITS images and building cometary and astronomical image-processing views. It brings FITS layer handling, target center search, filtering, reconstruction, and observation overlays into one local desktop workflow. The current workflow is primarily focused on Hubble Space Telescope (HST) and Gemini/GMOS FITS data.
 
-<p align="center">
-  <img src="docs/assets/threei-processing-15.png" alt="3i processing result with observation overlay" width="49%">
-  <img src="docs/assets/threei-processing-18.png" alt="3i processed FITS view" width="49%">
-</p>
-
 ## What it does
 
 - Opens FITS image data through a napari workflow.
 - Provides layer-oriented processing for astronomical images.
-- Includes Larson-Sekanina filtering and MAGS (Multi-Angle Ghost Suppression), an experimental Larson-Sekanina extension.
+- Includes Larson-Sekanina filtering.
 - Includes Target MFSR, a drizzle-like target-aligned reconstruction workflow.
 - Provides Core Search for target-center marking and per-layer center display state.
 - Builds observation overlays for measurements, compass and direction annotations, image context, and display metadata.
+- Includes an experimental MAGS mode inside the Larson-Sekanina tool.
 
 ## Status
 
-3i is currently a release candidate (`v1.0.0-rc.1`). It is intended for local research and analysis workflows. UI details, processing options, and installation packaging may still change before a stable release.
+3i is currently at `v1.0.0`. It is intended for local research and analysis workflows. This release stabilizes the current FITS, processing, Target MFSR, Core Search, and observation-overlay workflow.
 
 ## Getting started
 

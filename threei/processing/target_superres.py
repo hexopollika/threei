@@ -51,8 +51,8 @@ class SRResult:
     hr_image: np.ndarray
     hr_weight: np.ndarray
     hr_wcs: WCS
+    hr_target_yx: tuple [float, float]
     backend_resolution: sr_drizzle_backend_resolution_t | None = None
-    hr_target_yx: tuple [float, float] | None = None
     output_mode: str = SR_OUTPUT_MODE_TARGET_ROI
     uncovered_pixels: int = 0
     uncovered_fraction: float = 0.0
@@ -290,8 +290,8 @@ def run_target_superres (
             hr_image = hr_image,
             hr_weight = hr_weight,
             hr_wcs = hr_wcs,
-            backend_resolution = backend_resolution,
             hr_target_yx = (float (hr_target_y), float (hr_target_x)),
+            backend_resolution = backend_resolution,
             output_mode = output_footprint.mode,
             uncovered_pixels = coverage.uncovered_pixels,
             uncovered_fraction = coverage.uncovered_fraction,
@@ -372,7 +372,7 @@ def sr_coverage_stats (
     zero_weight_pixels = int (np.count_nonzero (zero_weight))
     uncovered_pixels = int (np.count_nonzero (uncovered))
     return SRCoverageStats (
-        uncovered_pixels = uncovered_pixels,
+        uncovered_pixels,
         uncovered_fraction = float (uncovered_pixels) / float (total),
         zero_weight_pixels = zero_weight_pixels,
         zero_weight_fraction = float (zero_weight_pixels) / float (total),

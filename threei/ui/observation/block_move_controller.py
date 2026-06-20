@@ -2,6 +2,7 @@
 # Licensed under the MIT License
 from __future__ import annotations
 
+import threei.observation.overlay.scene_model as scene_model
 from dataclasses import dataclass
 from dataclasses import replace
 from collections.abc import Generator
@@ -14,15 +15,11 @@ try:
 except Exception:
     QTimer = None
 
-from threei.observation.overlay.models import (
-    observation_overlay_block_ui_state_t,
-    observation_overlay_preview_request_t,
-    observation_overlay_preview_result_t,
-    observation_overlay_scene_t,
-    observation_overlay_ui_state_t,
-)
+import threei.observation.overlay.panel_state as panel_state
+import threei.observation.overlay.preview_contracts as preview_contracts
+import threei.ui.observation.panel_state_mapping as panel_state_mapping
 from threei.ui.observation.panel_widgets import (
-    observation_overlay_panel_widgets_t,
+    observation_panel_widgets_t,
 )
 from threei.ui.observation.runtime_store import observation_runtime_store_t
 
@@ -31,7 +28,7 @@ from threei.ui.observation.runtime_store import observation_runtime_store_t
 class _block_drag_session_t:
     block_key: str
     start_cursor_yx: tuple [float, float]
-    start_block_state: observation_overlay_block_ui_state_t
+    start_block_state: panel_state.block_t
     data_per_screen_px_yx: tuple [float, float] = (1.0, 1.0)
     preview: "_drag_preview_t | None" = None
 
@@ -46,8 +43,8 @@ class _measurement_area_drag_session_t:
 @dataclass (slots = True, frozen = True)
 class _drag_preview_t:
     source_layer_key: str
-    base_scene: observation_overlay_scene_t
-    component_scene: observation_overlay_scene_t
+    base_scene: scene_model.scene_t
+    component_scene: scene_model.scene_t
     replace_components: tuple [str, ...]
     source_layer: object | None = None
 
@@ -66,7 +63,7 @@ class start_drag_session_request_t:
     layer: object
     event: object
 
-class observation_overlay_block_move_controller_t:
+class observation_block_move_controller_t:
     _ACTIVE_BUTTON_STYLE = "background-color: #ffaa00; color: black; font-weight: bold;"
     _DRAG_REBUILD_DEBOUNCE_MS = 16
 
@@ -74,9 +71,9 @@ class observation_overlay_block_move_controller_t:
         self,
         *,
         viewer,
-        widgets: observation_overlay_panel_widgets_t,
-        get_ui_state: Callable[[], observation_overlay_ui_state_t],
-        set_ui_state: Callable[[observation_overlay_ui_state_t], None],
+        widgets: observation_panel_widgets_t,
+        get_ui_state: Callable[[], panel_state.root_t],
+        set_ui_state: Callable[[panel_state.root_t], None],
         active_image_adapter: Callable[[], object],
         overlay_scene_manager,
         measurement_area_center_yx_resolver: Callable[[object], tuple [float, float] | None],
@@ -86,12 +83,13 @@ class observation_overlay_block_move_controller_t:
         rebuild_author_overlays_for_layer: Callable[..., None] | None = None,
         rebuild_compass_info_overlays_for_layer: Callable[..., None] | None = None,
         normalize_offset_px: Callable[[object], int],
-        begin_preview_overlay: Callable[[observation_overlay_preview_request_t], observation_overlay_preview_result_t] | None = None,
-        update_preview_overlay: Callable[[tuple [float, float]], observation_overlay_preview_result_t] | None = None,
-        end_preview_overlay: Callable[..., observation_overlay_preview_result_t] | None = None,
-        apply_preview_overlay: Callable[[observation_overlay_preview_request_t], observation_overlay_preview_result_t] | None = None,
+        begin_preview_overlay: Callable[[preview_contracts.request_t], preview_contracts.result_t] | None = None,
+        update_preview_overlay: Callable[[tuple [float, float]], preview_contracts.result_t] | None = None,
+        end_preview_overlay: Callable[..., preview_contracts.result_t] | None = None,
+        apply_preview_overlay: Callable[[preview_contracts.request_t], preview_contracts.result_t] | None = None,
         runtime_store: observation_runtime_store_t | None = None,
         data_per_screen_px_yx_resolver: Callable[[Any], tuple [float, float] | None] | None = None,
+        state_mapper: panel_state_mapping.mapper_t | None = None,
     ):
         self._viewer = viewer
         self._widgets = widgets
@@ -126,7 +124,9 @@ class observation_overlay_block_move_controller_t:
             if callable (data_per_screen_px_yx_resolver)
             else None
         )
-        self._normalize_offset_px = normalize_offset_px
+        self._state_mapper = state_mapper or panel_state_mapping.mapper_t (
+            normalize_offset_px = normalize_offset_px,
+        )
         self._runtime_store = (
             runtime_store
             if isinstance (runtime_store, observation_runtime_store_t)
@@ -359,10 +359,10 @@ class observation_overlay_block_move_controller_t:
         block_state = getattr (
             current_ui_state,
             self._block_attr_by_key [str (request.block_key or "")],
-            observation_overlay_block_ui_state_t (),
+            panel_state.block_t (),
         )
-        if not isinstance (block_state, observation_overlay_block_ui_state_t):
-            block_state = observation_overlay_block_ui_state_t ()
+        if not isinstance (block_state, panel_state.block_t):
+            block_state = panel_state.block_t ()
         resolved_block_key_2 = str (request.block_key or "")
         resolved_start_cursor_yx = (float (data_yx [0]), float (data_yx [1]))
         return _block_drag_session_t (
@@ -395,14 +395,14 @@ class observation_overlay_block_move_controller_t:
                     )
                     return
                 self._apply_dragged_measurement_area_center (
-                    center_yx = self._measurement_area_center_for_drag (
+                    self._measurement_area_center_for_drag (
                         start_center_yx = request.drag_session.start_center_yx,
                         start_cursor_yx = request.drag_session.start_cursor_yx,
                         current_cursor_yx = data_yx,
                     ),
-                    layer_adapter = request.layer_adapter,
-                    commit = False,
-                    preview_active = False,
+                    request.layer_adapter,
+                    False,
+                    False,
                 )
                 return
             if preview_active:
@@ -411,16 +411,16 @@ class observation_overlay_block_move_controller_t:
                     commit = True,
                 )
             self._apply_dragged_measurement_area_center (
-                center_yx = self._measurement_area_center_for_drag (
+                self._measurement_area_center_for_drag (
                     start_center_yx = request.drag_session.start_center_yx,
                     start_cursor_yx = request.drag_session.start_cursor_yx,
                     current_cursor_yx = data_yx,
                 ),
-                layer_adapter = request.layer_adapter,
-                commit = resolved_commit,
-                preview_active = preview_active,
-                preview = request.drag_session.preview,
-                final_delta_yx = delta_yx,
+                request.layer_adapter,
+                resolved_commit,
+                preview_active,
+                request.drag_session.preview,
+                delta_yx,
             )
             return
         delta_yx = (
@@ -445,8 +445,8 @@ class observation_overlay_block_move_controller_t:
                 request.drag_session.block_key,
                 updated_block,
                 request.layer_adapter,
-                commit = False,
-                preview_active = False,
+                False,
+                False,
             )
             return
         if preview_active:
@@ -464,20 +464,20 @@ class observation_overlay_block_move_controller_t:
             request.drag_session.block_key,
             updated_block,
             request.layer_adapter,
-            commit = resolved_commit,
-            preview_active = preview_active,
-            preview = request.drag_session.preview,
-            final_delta_yx = delta_yx,
+            resolved_commit,
+            preview_active,
+            request.drag_session.preview,
+            delta_yx,
         )
 
     def _block_state_for_drag (
         self,
         *,
-        block_state: observation_overlay_block_ui_state_t,
+        block_state: panel_state.block_t,
         start_cursor_yx: tuple [float, float],
         current_cursor_yx: tuple [float, float],
         data_per_screen_px_yx: tuple [float, float] | None = None,
-    ) -> observation_overlay_block_ui_state_t:
+    ) -> panel_state.block_t:
         data_y, data_x = self._normalized_data_per_screen_px_yx (
             data_per_screen_px_yx,
         )
@@ -485,10 +485,19 @@ class observation_overlay_block_move_controller_t:
         delta_x = (float (current_cursor_yx [1]) - float (start_cursor_yx [1])) / data_x
         offset_y = float (getattr (block_state, "offset_y_px", 0)) + delta_y
         offset_x = float (getattr (block_state, "offset_x_px", 0)) + delta_x
+        state_mapper = self._panel_state_mapper ()
         return replace (
             block_state,
-            offset_x_px = int (self._normalize_offset_px (int (round (offset_x)))),
-            offset_y_px = int (self._normalize_offset_px (int (round (offset_y)))),
+            offset_x_px = int (state_mapper.normalize_offset_px (int (round (offset_x)))),
+            offset_y_px = int (state_mapper.normalize_offset_px (int (round (offset_y)))),
+        )
+
+    def _panel_state_mapper (self) -> panel_state_mapping.mapper_t:
+        mapper = getattr (self, "_state_mapper", None)
+        if isinstance (mapper, panel_state_mapping.mapper_t):
+            return mapper
+        return panel_state_mapping.mapper_t (
+            normalize_offset_px = getattr (self, "_normalize_offset_px", None),
         )
 
     def _image_shape_yx (self, layer_adapter, layer) -> tuple [int, int] | None:
@@ -560,7 +569,6 @@ class observation_overlay_block_move_controller_t:
 
     def _apply_dragged_measurement_area_center (
         self,
-        *,
         center_yx: tuple [float, float],
         layer_adapter,
         commit: bool,
@@ -609,9 +617,8 @@ class observation_overlay_block_move_controller_t:
     def _apply_dragged_block_state (
         self,
         block_key: str,
-        block_state: observation_overlay_block_ui_state_t,
+        block_state: panel_state.block_t,
         layer_adapter,
-        *,
         commit: bool,
         preview_active: bool = False,
         preview: _drag_preview_t | None = None,
@@ -729,12 +736,12 @@ class observation_overlay_block_move_controller_t:
     def _apply_block_state_to_widgets (
         self,
         block_widgets,
-        state: observation_overlay_block_ui_state_t,
+        state: panel_state.block_t,
     ) -> None:
-        if getattr (block_widgets.offset_x_widget, "value", None) != state.offset_x_px:
-            block_widgets.offset_x_widget.value = int (state.offset_x_px)
-        if getattr (block_widgets.offset_y_widget, "value", None) != state.offset_y_px:
-            block_widgets.offset_y_widget.value = int (state.offset_y_px)
+        self._panel_state_mapper ().restore_block_offsets_to_widgets (
+            block_widgets,
+            state,
+        )
 
     def _start_drag_preview (
         self,
@@ -751,7 +758,7 @@ class observation_overlay_block_move_controller_t:
         base_scene = None
         if self._runtime_store is not None:
             base_scene = self._runtime_store.current_scene (source_layer_key)
-        if not isinstance (base_scene, observation_overlay_scene_t):
+        if not isinstance (base_scene, scene_model.scene_t):
             return None
         try:
             component_scene = self._overlay_scene_manager.keep_components (
@@ -760,15 +767,15 @@ class observation_overlay_block_move_controller_t:
             )
         except Exception:
             return None
-        if not isinstance (component_scene, observation_overlay_scene_t):
+        if not isinstance (component_scene, scene_model.scene_t):
             return None
         if not component_scene.has_content ():
             return None
         preview = _drag_preview_t (
-            source_layer_key = source_layer_key,
-            base_scene = base_scene,
-            component_scene = component_scene,
-            replace_components = replace_components,
+            source_layer_key,
+            base_scene,
+            component_scene,
+            replace_components,
             source_layer = getattr (layer_adapter, "layer", None),
         )
         if not self._begin_drag_preview_via_display_owner (preview):
@@ -868,11 +875,11 @@ class observation_overlay_block_move_controller_t:
         self,
         preview: _drag_preview_t,
         delta_yx: tuple [float, float],
-    ) -> observation_overlay_preview_request_t:
-        return observation_overlay_preview_request_t (
-            source_layer_key = preview.source_layer_key,
-            base_scene = preview.base_scene,
-            component_scene = preview.component_scene,
+    ) -> preview_contracts.request_t:
+        return preview_contracts.request_t (
+            preview.source_layer_key,
+            preview.base_scene,
+            preview.component_scene,
             replace_components = tuple (preview.replace_components),
             delta_yx = (float (delta_yx [0]), float (delta_yx [1])),
             layout_side_px = self._current_layout_side_px (),

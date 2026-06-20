@@ -61,7 +61,6 @@ def hud_margin_data_yx (hud_layout) -> tuple[float, float]:
 
 def hud_screen_size_to_data_yx (
     hud_layout,
-    *,
     height_px: float,
     width_px: float,
 ) -> tuple[float, float]:
@@ -112,20 +111,18 @@ def hud_visible_rect_yx (hud_layout) -> tuple[float, float, float, float]:
 
 def hud_block_top_left_yx (
     hud_layout,
-    *,
     block_width_px: float,
     block_height_px: float,
 ) -> tuple[float, float]:
     return hud_block_box_yx (
         hud_layout,
-        block_width_px = block_width_px,
-        block_height_px = block_height_px,
+        block_width_px,
+        block_height_px,
     ).content_top_left_yx ()
 
 
 def hud_block_box_yx (
     hud_layout,
-    *,
     block_width_px: float,
     block_height_px: float,
 ) -> observation_hud_block_box_t:
@@ -140,15 +137,15 @@ def hud_block_box_yx (
             pass
     height_data, width_data = hud_screen_size_to_data_yx (
         hud_layout,
-        height_px = height_px,
-        width_px = width_px,
+        height_px,
+        width_px,
     )
     anchor = str (getattr (hud_layout, "anchor", "top_left") or "top_left").strip ().lower ()
     top_inset_px = HUD_TOP_CONTENT_INSET_PX if anchor.startswith ("top") else 0.0
     inset_y, inset_x = hud_screen_size_to_data_yx (
         hud_layout,
-        height_px = top_inset_px,
-        width_px = 0.0,
+        top_inset_px,
+        0.0,
     )
     outer_height = float (height_data) + float (inset_y)
     outer_width = float (width_data) + float (inset_x)
@@ -165,7 +162,7 @@ def hud_block_box_yx (
     anchor_y = outer_top + outer_height if at_bottom else outer_top
     anchor_x = outer_left + outer_width if at_right else outer_left
     return observation_hud_block_box_t (
-        anchor = anchor,
+        anchor,
         anchor_yx = (
             float (anchor_y + offset_y),
             float (anchor_x + offset_x),

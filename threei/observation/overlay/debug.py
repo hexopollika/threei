@@ -11,7 +11,7 @@ from threei.observation.target_ephemeris_provider import (
 )
 
 
-class observation_overlay_debug_reporter_t:
+class observation_debug_reporter_t:
     def __init__ (self, *, enabled: bool | None = None, perf_enabled: bool | None = None):
         self._debug_enabled = (
             self._env_flag ("THREEI_OBSERVATION_DEBUG")

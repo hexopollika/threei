@@ -36,7 +36,6 @@ class observation_text_block_layout_t:
 
     def _ensure_qt_metrics (
         self,
-        *,
         text_scale: float = 1.0,
     ):
         return self._text_metrics.metrics_or_none (scale = text_scale)
@@ -44,7 +43,7 @@ class observation_text_block_layout_t:
     def _resolve_font_family (self) -> str:
         return self._text_metrics.resolve_font_family ()
 
-    def _font_size_px (self, *, text_scale: float = 1.0) -> float:
+    def _font_size_px (self, text_scale: float = 1.0) -> float:
         return self._text_metrics.font_size_px (text_scale)
 
     def fit_text_into_rect (
@@ -135,7 +134,7 @@ class observation_text_block_layout_t:
             lines = [""]
         width = 0.0
         for line in lines:
-            width = max (width, self._line_width_px (line, text_scale = text_scale))
+            width = max (width, self._line_width_px (line, text_scale))
         if self._text_height_resolver is not None:
             try:
                 height = float (
@@ -146,9 +145,9 @@ class observation_text_block_layout_t:
                     )
                 )
             except Exception:
-                height = self._line_height_px (text_scale = text_scale) * float (len (lines))
+                height = self._line_height_px (text_scale) * float (len (lines))
         else:
-            height = self._line_height_px (text_scale = text_scale) * float (len (lines))
+            height = self._line_height_px (text_scale) * float (len (lines))
         return float (width), float (height)
 
     def _char_width_px (self) -> float:
@@ -156,10 +155,9 @@ class observation_text_block_layout_t:
 
     def _line_height_px (
         self,
-        *,
         text_scale: float = 1.0,
     ) -> float:
-        metrics = self._ensure_qt_metrics (text_scale = text_scale)
+        metrics = self._ensure_qt_metrics (text_scale)
         if metrics is not None:
             try:
                 line_h = float (metrics.lineSpacing ())
@@ -167,17 +165,16 @@ class observation_text_block_layout_t:
                     return line_h
             except Exception:
                 pass
-        font_size_px = self._font_size_px (text_scale = text_scale)
+        font_size_px = self._font_size_px (text_scale)
         return float (font_size_px * self.LINE_HEIGHT_FACTOR * self.FALLBACK_SIZE_GUARD_FACTOR)
 
     def _line_width_px (
         self,
         line: str,
-        *,
         text_scale: float = 1.0,
     ) -> float:
         text = str (line or "")
-        metrics = self._ensure_qt_metrics (text_scale = text_scale)
+        metrics = self._ensure_qt_metrics (text_scale)
         if metrics is not None:
             try:
                 width = float (metrics.horizontalAdvance (text))
@@ -185,7 +182,7 @@ class observation_text_block_layout_t:
                     return width
             except Exception:
                 pass
-        font_size_px = self._font_size_px (text_scale = text_scale)
+        font_size_px = self._font_size_px (text_scale)
         return float (len (text)) * float (font_size_px * self.CHAR_WIDTH_FACTOR * self.FALLBACK_SIZE_GUARD_FACTOR)
 
     def _wrap_line (self, line: str, max_chars: int) -> list [str]:

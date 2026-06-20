@@ -9,27 +9,27 @@ from astropy.io import fits
 
 
 @dataclass (slots = True, frozen = True)
-class observation_overlay_data_t:
+class observation_data_t:
     context: Optional[Any]
     headers: tuple [fits.Header, ...]
 
 
-class observation_overlay_data_resolver_t:
+class observation_data_resolver_t:
     def __init__ (self, *, context_provider: Any):
         self._context_provider = context_provider
 
-    def resolve_for_layer (self, layer) -> observation_overlay_data_t:
+    def resolve_for_layer (self, layer) -> observation_data_t:
         context = self._safe_resolve_context (layer)
         if context is not None:
             context_headers = self._headers_from_context (context)
             if context_headers:
-                return observation_overlay_data_t (
+                return observation_data_t (
                     context,
                     context_headers,
                 )
 
         headers = self._safe_resolve_headers (layer)
-        return observation_overlay_data_t (
+        return observation_data_t (
             context,
             headers,
         )

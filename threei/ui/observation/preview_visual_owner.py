@@ -2,16 +2,14 @@
 # Licensed under the MIT License
 from __future__ import annotations
 
+import threei.observation.overlay.scene_model as scene_model
 from dataclasses import dataclass, field
 import logging
 from typing import Any, Callable
 
 import numpy as np
 
-from threei.observation.overlay.models import (
-    observation_overlay_layer_apply_spec_t,
-    observation_overlay_scene_t,
-)
+import threei.observation.overlay.render_contracts as render_contracts
 from threei.observation.overlay.visual.vispy_text_policy import (
     DEFAULT_OBSERVATION_VISPY_TEXT_POLICY,
 )
@@ -54,38 +52,37 @@ class observation_preview_visual_owner_t:
     def apply (
         self,
         *,
-        spec: observation_overlay_layer_apply_spec_t,
-        scene: observation_overlay_scene_t,
+        spec: render_contracts.layer_apply_spec_t,
+        scene: scene_model.scene_t,
     ) -> bool:
         return self._apply (
-            spec = spec,
-            scene = scene,
-            visible = True,
+            spec,
+            scene,
+            True,
         )
 
     def prepare (
         self,
         *,
-        spec: observation_overlay_layer_apply_spec_t,
-        scene: observation_overlay_scene_t,
+        spec: render_contracts.layer_apply_spec_t,
+        scene: scene_model.scene_t,
     ) -> bool:
         return self._apply (
-            spec = spec,
-            scene = scene,
-            visible = False,
+            spec,
+            scene,
+            False,
         )
 
     def _apply (
         self,
-        *,
-        spec: observation_overlay_layer_apply_spec_t,
-        scene: observation_overlay_scene_t,
+        spec: render_contracts.layer_apply_spec_t,
+        scene: scene_model.scene_t,
         visible: bool,
     ) -> bool:
         source_key = self._source_key (spec)
         if not source_key:
             return False
-        if not isinstance (scene, observation_overlay_scene_t) or not scene.has_content ():
+        if not isinstance (scene, scene_model.scene_t) or not scene.has_content ():
             self.hide_source (source_layer_key = source_key)
             return True
         source_layer = getattr (spec, "source_layer", None)
@@ -96,21 +93,21 @@ class observation_preview_visual_owner_t:
             return False
         try:
             record = self._record_for_apply (
-                source_key = source_key,
-                source_layer = source_layer,
-                parent = parent,
+                source_key,
+                source_layer,
+                parent,
             )
             record.visible = bool (visible)
             self._update_nodes (
-                record = record,
-                parent = parent,
-                transform = transform,
-                order = self._preview_order (
-                    parent = parent,
-                    source_layer = source_layer,
+                record,
+                parent,
+                transform,
+                self._preview_order (
+                    parent,
+                    source_layer,
                 ),
-                scene = scene,
-                text_base_size_px = float (getattr (spec, "text_base_size_px", 10.0)),
+                scene,
+                float (getattr (spec, "text_base_size_px", 10.0)),
             )
         except Exception as exc:
             self.remove_source (source_layer_key = source_key)
@@ -160,7 +157,6 @@ class observation_preview_visual_owner_t:
 
     def _record_for_apply (
         self,
-        *,
         source_key: str,
         source_layer,
         parent,
@@ -172,13 +168,13 @@ class observation_preview_visual_owner_t:
             record = None
         if record is None:
             record = _preview_visual_record_t (
-                source_layer = source_layer,
-                parent = parent,
+                source_layer,
+                parent,
                 line_nodes = [],
                 text_nodes = [],
                 visible_callback = self._connect_source_visibility (
-                    source_key = key,
-                    source_layer = source_layer,
+                    key,
+                    source_layer,
                 ),
             )
             self._records_by_source_key [key] = record
@@ -186,20 +182,19 @@ class observation_preview_visual_owner_t:
             self._disconnect_source_visibility (record)
             record.source_layer = source_layer
             record.visible_callback = self._connect_source_visibility (
-                source_key = key,
-                source_layer = source_layer,
+                key,
+                source_layer,
             )
         record.parent = parent
         return record
 
     def _update_nodes (
         self,
-        *,
         record: _preview_visual_record_t,
         parent,
         transform,
         order: float,
-        scene: observation_overlay_scene_t,
+        scene: scene_model.scene_t,
         text_base_size_px: float,
     ) -> None:
         shapes = list (getattr (scene, "shapes", []) or [])
@@ -213,22 +208,22 @@ class observation_preview_visual_owner_t:
             line = self._node_at (record.line_nodes, len (next_line_nodes))
             if line is None:
                 line = self._create_line_node (
-                    pos = pos,
-                    color = self._value_at (edge_colors, idx, "yellow"),
-                    width = float (self._value_at (edge_widths, idx, 1.0)),
+                    pos,
+                    self._value_at (edge_colors, idx, "yellow"),
+                    float (self._value_at (edge_widths, idx, 1.0)),
                 )
             else:
                 self._update_line_node (
-                    line = line,
-                    pos = pos,
-                    color = self._value_at (edge_colors, idx, "yellow"),
-                    width = float (self._value_at (edge_widths, idx, 1.0)),
+                    line,
+                    pos,
+                    self._value_at (edge_colors, idx, "yellow"),
+                    float (self._value_at (edge_widths, idx, 1.0)),
                 )
             self._prepare_node (
                 line,
-                parent = parent,
-                transform = transform,
-                order = float (order),
+                parent,
+                transform,
+                float (order),
             )
             next_line_nodes.append (line)
         stale_line_nodes = record.line_nodes [len (next_line_nodes):]
@@ -253,25 +248,25 @@ class observation_preview_visual_owner_t:
                 text_node = None
             if text_node is None:
                 text_node = self._create_text_node (
-                    text = text,
-                    color = getattr (item, "text_color", "yellow"),
-                    font_size = max (1, int (round (float (text_base_size_px) * float (text_scale)))),
-                    pos = self._yx_to_xy (anchor_yx),
-                    anchor_y = anchor_y,
+                    text,
+                    getattr (item, "text_color", "yellow"),
+                    max (1, int (round (float (text_base_size_px) * float (text_scale)))),
+                    self._yx_to_xy (anchor_yx),
+                    anchor_y,
                 )
             else:
                 self._update_text_node (
-                    text_node = text_node,
-                    text = text,
-                    color = getattr (item, "text_color", "yellow"),
-                    font_size = max (1, int (round (float (text_base_size_px) * float (text_scale)))),
-                    pos = self._yx_to_xy (anchor_yx),
+                    text_node,
+                    text,
+                    getattr (item, "text_color", "yellow"),
+                    max (1, int (round (float (text_base_size_px) * float (text_scale)))),
+                    self._yx_to_xy (anchor_yx),
                 )
             self._prepare_node (
                 text_node,
-                parent = parent,
-                transform = transform,
-                order = float (order) + 0.01,
+                parent,
+                transform,
+                float (order) + 0.01,
             )
             next_text_nodes.append (text_node)
             next_text_anchor_y_modes.append (anchor_y)
@@ -285,7 +280,6 @@ class observation_preview_visual_owner_t:
 
     def _create_line_node (
         self,
-        *,
         pos: np.ndarray,
         color,
         width: float,
@@ -303,7 +297,6 @@ class observation_preview_visual_owner_t:
 
     def _update_line_node (
         self,
-        *,
         line,
         pos: np.ndarray,
         color,
@@ -325,7 +318,6 @@ class observation_preview_visual_owner_t:
 
     def _create_text_node (
         self,
-        *,
         text: str,
         color,
         font_size: int,
@@ -348,7 +340,6 @@ class observation_preview_visual_owner_t:
 
     def _update_text_node (
         self,
-        *,
         text_node,
         text: str,
         color,
@@ -369,7 +360,6 @@ class observation_preview_visual_owner_t:
     def _prepare_node (
         self,
         node,
-        *,
         parent,
         transform,
         order: float,
@@ -384,18 +374,17 @@ class observation_preview_visual_owner_t:
 
     def _preview_order (
         self,
-        *,
         parent,
         source_layer,
     ) -> float:
         visual_order = self._visual_order (
-            parent = parent,
-            source_layer = source_layer,
+            parent,
+            source_layer,
         )
         if visual_order is not None:
             return float (visual_order) + 0.5
         layer_index_order = self._layer_index_order (
-            source_layer = source_layer,
+            source_layer,
         )
         if layer_index_order is not None:
             return float (layer_index_order) + 0.5
@@ -423,7 +412,6 @@ class observation_preview_visual_owner_t:
 
     def _visual_order (
         self,
-        *,
         parent,
         source_layer,
     ) -> float | None:
@@ -445,7 +433,6 @@ class observation_preview_visual_owner_t:
 
     def _layer_index_order (
         self,
-        *,
         source_layer,
     ) -> int | None:
         layers = getattr (self._viewer, "layers", None)
@@ -556,7 +543,6 @@ class observation_preview_visual_owner_t:
 
     def _connect_source_visibility (
         self,
-        *,
         source_key: str,
         source_layer,
     ) -> Callable[[object], None] | None:
@@ -655,7 +641,7 @@ class observation_preview_visual_owner_t:
         return current
 
     @staticmethod
-    def _source_key (spec: observation_overlay_layer_apply_spec_t) -> str:
+    def _source_key (spec: render_contracts.layer_apply_spec_t) -> str:
         return str (getattr (spec, "source_layer_key", "") or "")
 
     def _warn_once (self, message: str) -> None:

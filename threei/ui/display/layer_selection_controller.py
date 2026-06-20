@@ -55,7 +55,7 @@ class display_layer_selection_controller_t:
             return
         layer = getattr (event, "value", None)
         preferred = layer if isinstance (layer, napari.layers.Image) else self.active_image_layer ()
-        self.refresh_layer_choices (preferred = preferred)
+        self.refresh_layer_choices (preferred)
 
     def on_layer_removed (self, event = None) -> None:
         if self._disposed:

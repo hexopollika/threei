@@ -7,13 +7,18 @@ from dataclasses import dataclass
 from magicgui import magicgui
 
 from threei.processing.background import subtract_background_with_diagnostics
-from threei.ui.image_tools.widget_controller import (
-    filter_panel_base_t,
-    filter_widget_controller_t,
+from threei.ui.common.provenance import (
+    PROVENANCE_KIND_DATA,
+    provenance_pending_step_metadata,
+    provenance_step_t,
+)
+from threei.ui.derived_image.widget_controller import (
+    derived_image_panel_base_t,
+    derived_image_widget_controller_t,
 )
 
 
-class background_widget_controller_t (filter_widget_controller_t):
+class background_widget_controller_t (derived_image_widget_controller_t):
     def compute_image (
         self,
         request,
@@ -26,7 +31,7 @@ class background_widget_controller_t (filter_widget_controller_t):
         work_box_size = int (params.box_size)
         work_filter_size = int (params.filter_size)
 
-        if mode == "preview" and preview_window is not None:
+        if self._is_windowed_mode (mode) and preview_window is not None:
             local_min_dim = min (work_data.shape [0], work_data.shape [1])
             work_box_size = max (2, min (work_box_size, local_min_dim))
             work_filter_size = max (1, min (work_filter_size, work_box_size))
@@ -43,10 +48,46 @@ class background_widget_controller_t (filter_widget_controller_t):
             "image": background_result.image,
             "background_method": background_result.method,
             "background_fallback_used": background_result.fallback_used,
+            "metadata": provenance_pending_step_metadata (
+                provenance_step_t (
+                    PROVENANCE_KIND_DATA,
+                    stage = "background",
+                    method = str (background_result.method),
+                    summary = _background_methods_summary (
+                        params,
+                        method = str (background_result.method),
+                    ),
+                    params = {
+                        "box_size": int (params.box_size),
+                        "filter_size": int (params.filter_size),
+                        "sigma": float (params.sigma),
+                        "maxiters": int (params.maxiters),
+                        "exclude_percentile": float (params.exclude_percentile),
+                    },
+                )
+            ),
         }
         if background_result.fallback_reason is not None:
             result ["background_fallback_reason"] = background_result.fallback_reason
+        if str (mode) == self.ROI_MODE:
+            metadata = result.get ("metadata")
+            if isinstance (metadata, dict):
+                metadata ["pipeline_roi_quality"] = "approximate-local-background-model"
         return result
+
+    def _is_windowed_mode (self, mode: str) -> bool:
+        return str (mode) in {self.PREVIEW_MODE, self.ROI_MODE}
+
+
+def _background_methods_summary (
+    params: "_background_request_params_t",
+    *,
+    method: str,
+) -> str:
+    return (
+        f"Background {str (method or 'median')} "
+        f"(box={int (params.box_size)}, filter={int (params.filter_size)})"
+    )
 
 
 @dataclass (slots = True, frozen = True)
@@ -123,7 +164,7 @@ class background_panel_controller_t:
         ))
 
 
-class background_filter_panel_t (filter_panel_base_t):
+class background_filter_panel_t (derived_image_panel_base_t):
     controller_cls = background_widget_controller_t
     output_suffix = "background subtracted"
 

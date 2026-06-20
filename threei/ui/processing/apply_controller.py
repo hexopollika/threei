@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from napari.layers import Image
 
-from threei.ui.common.layer_types import VISUAL_STRETCH_FILTER_TYPES
+from threei.ui.filters.dependencies import filter_requires_target_center
 
 
 def _noop_show_warning (_message: str) -> None:
@@ -57,10 +57,7 @@ class processing_apply_controller_t:
             return
 
         base_layer_id = self._layer_registry.ensure_layer_metadata (base_layer)
-        if (
-            self._layer_registry.is_visual_stretch_layer (base_layer)
-            and filter_type not in VISUAL_STRETCH_FILTER_TYPES
-        ):
+        if self._layer_registry.is_visual_stretch_layer (base_layer):
             self._set_status ("Select a scientific source layer for this filter.")
             return
 
@@ -77,10 +74,9 @@ class processing_apply_controller_t:
                 splice_children = False,
             )
 
-        if (
-            filter_type in {"ls", "experimental_ls"}
-            and self._layer_registry.layer_target_center (base_layer) is None
-        ):
+        if filter_requires_target_center (
+            filter_type
+        ) and self._layer_registry.layer_target_center (base_layer) is None:
             self._show_missing_target_center_warning ()
             return
 
@@ -102,7 +98,7 @@ class processing_apply_controller_t:
             pass
 
     def _show_missing_target_center_warning (self) -> None:
-        message = "Set target center with Core Search before running LS."
+        message = "Set target center with Core Search before running this method."
         self._set_status (message)
         try:
             self._show_warning (message)

@@ -5,7 +5,11 @@ from __future__ import annotations
 import numpy as np
 
 from threei.processing.ls.models import debug_layer_t
-from threei.ui.filters.ls.display import extra_layer_contrast_limits
+from threei.ui.filters.ls.display import (
+    extra_layer_display_domain,
+    extra_layer_display_window,
+)
+from threei.ui.layers.metadata_policy import derived_image_metadata_from_source
 from threei.ui.layers import image_layer_adapter_t
 
 
@@ -70,23 +74,33 @@ class ls_extra_layer_manager_t:
         if not source_adapter.is_valid:
             return
         resolved_image = np.array(image, dtype=np.float32, copy=True, order="C")
-        contrast_limits = extra_layer_contrast_limits(logical_name, resolved_image)
+        display_domain = extra_layer_display_domain(logical_name, resolved_image)
+        display_window = extra_layer_display_window(
+            logical_name,
+            resolved_image,
+            display_domain=display_domain,
+        )
         if layer_name in self.viewer.layers:
             existing_layer = self.viewer.layers[layer_name]
             existing_layer.data = resolved_image
-            try:
-                existing_layer.contrast_limits = contrast_limits
-            except Exception:
-                pass
+            self._apply_display_controls(
+                existing_layer,
+                display_domain,
+                display_window,
+            )
             source_adapter.copy_transform_to(existing_layer)
             return
 
         add_kwargs = source_adapter.build_add_image_kwargs(
             name=layer_name,
-            contrast_limits=contrast_limits,
         )
         out_layer = self.viewer.add_image(resolved_image, **add_kwargs)
-        out_layer.metadata = source_adapter.metadata_copy()
+        self._apply_display_controls(
+            out_layer,
+            display_domain,
+            display_window,
+        )
+        out_layer.metadata = derived_image_metadata_from_source(source_adapter)
 
     def _extra_layer_name(self, group_name: str, logical_name: str) -> str:
         return f"{self._output_name_getter()}-[{group_name}:{logical_name}]"
@@ -98,5 +112,20 @@ class ls_extra_layer_manager_t:
             return
         try:
             self.viewer.layers.remove(layer)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _apply_display_controls(
+        layer,
+        display_domain: tuple[float, float],
+        display_window: tuple[float, float],
+    ) -> None:
+        try:
+            layer.contrast_limits_range = display_domain
+        except Exception:
+            pass
+        try:
+            layer.contrast_limits = display_window
         except Exception:
             pass

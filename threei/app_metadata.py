@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 APP_NAME = "3i"
-APP_VERSION = "1.0.0-rc.1"
+APP_VERSION = "1.0.0"
 APP_COPYRIGHT = "Copyright (c) 2026 Sattarov T.N."
 APP_LICENSE_LINE = "Licensed under the MIT License"
 

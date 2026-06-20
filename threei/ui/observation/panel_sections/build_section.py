@@ -8,14 +8,14 @@ from .shared import add_form_row, create_qt_section, fallback_title_row, native_
 def create_qt_build_section(
     *,
     overlay_button: Any,
-    reset_overlay_button: Any,
+    disable_overlay_button: Any,
     font_widget: Any,
     layout_side_widget: Any,
     text_scale_widget: Any,
 ) -> Any:
-    section, form = create_qt_section("Build")
+    section, form = create_qt_section("Overlay")
     form.addRow(native_of(overlay_button))
-    form.addRow(native_of(reset_overlay_button))
+    form.addRow(native_of(disable_overlay_button))
     add_form_row(form, "Layout", native_of(layout_side_widget))
     add_form_row(form, "Font", native_of(font_widget))
     add_form_row(form, "Text Scale", native_of(text_scale_widget))
@@ -25,15 +25,15 @@ def create_qt_build_section(
 def create_fallback_build_rows(
     *,
     overlay_button: Any,
-    reset_overlay_button: Any,
+    disable_overlay_button: Any,
     font_widget: Any,
     layout_side_widget: Any,
     text_scale_widget: Any,
 ) -> list[Any]:
     return [
-        fallback_title_row("Build"),
+        fallback_title_row("Overlay"),
         overlay_button,
-        reset_overlay_button,
+        disable_overlay_button,
         layout_side_widget,
         font_widget,
         text_scale_widget,

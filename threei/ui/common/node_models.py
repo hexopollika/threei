@@ -14,8 +14,6 @@ if TYPE_CHECKING:
 class node_ui_state_t:
     widget: object | None = None
     dock: object | None = None
-    preview_widget: object | None = None
-    preview_dock: object | None = None
     base_data_callback: object | None = None
 
 
@@ -52,22 +50,6 @@ class basic_node_t:
     @dock.setter
     def dock (self, value):
         self.ui.dock = value
-
-    @property
-    def preview_widget (self):
-        return self.ui.preview_widget
-
-    @preview_widget.setter
-    def preview_widget (self, value):
-        self.ui.preview_widget = value
-
-    @property
-    def preview_dock (self):
-        return self.ui.preview_dock
-
-    @preview_dock.setter
-    def preview_dock (self, value):
-        self.ui.preview_dock = value
 
     @property
     def base_data_callback (self):

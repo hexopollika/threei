@@ -1,31 +1,54 @@
 # Copyright (c) 2026 Sattarov T.N.
 # Licensed under the MIT License
 from __future__ import annotations
+
+from dataclasses import dataclass
 from math import isfinite
 from time import perf_counter
 from typing import TYPE_CHECKING, Callable, Optional
 
-from threei.observation.overlay.models import (
-    observation_overlay_layer_bundle_t,
-    observation_overlay_layout_t,
-    observation_overlay_scene_t,
-    observation_overlay_update_context_t,
-    observation_viewport_context_t,
-)
+import threei.observation.overlay.scene_model as scene_model
+import threei.observation.overlay.update_context as update_context
 from threei.ui.common.viewport import layer_canvas_viewport_bounds_yx, layer_viewport_bounds_yx
 from threei.ui.layers import image_layer_adapter_t
 from threei.ui.observation.runtime_store import observation_runtime_store_t
 
 if TYPE_CHECKING:
-    from threei.observation.overlay.scene_manager import observation_overlay_scene_manager_t
+    from threei.observation.overlay.scene_manager import observation_scene_manager_t
 
 
-class observation_overlay_update_context_controller_t:
+@dataclass (slots = True, frozen = True)
+class _layout_shape_t:
+    observation_layout: scene_model.layout_t
+    measurement_area_geometry: scene_model.layout_t
+    image_shape: tuple [int, ...]
+    viewport_context: update_context.viewport_t
+    placement_bounds_yx: tuple [tuple [float, float], tuple [float, float]] | None
+
+    def as_legacy_tuple (
+        self,
+    ) -> tuple [
+        scene_model.layout_t,
+        scene_model.layout_t,
+        tuple [int, ...],
+        update_context.viewport_t,
+        tuple [tuple [float, float], tuple [float, float]] | None,
+    ]:
+        return (
+            self.observation_layout,
+            self.measurement_area_geometry,
+            self.image_shape,
+            self.viewport_context,
+            self.placement_bounds_yx,
+        )
+
+
+class observation_update_context_controller_t:
     def __init__ (
         self,
         *,
         viewer,
-        overlay_scene_manager: observation_overlay_scene_manager_t,
+        overlay_scene_manager: observation_scene_manager_t,
         status_widget,
         status_messages,
         square_side_px_resolver: Callable[[], float],
@@ -78,13 +101,34 @@ class observation_overlay_update_context_controller_t:
         timings_ms: Optional[list [tuple [str, float]]] = None,
     ) -> Optional[
         tuple [
-            observation_overlay_layout_t,
-            observation_overlay_layout_t,
+            scene_model.layout_t,
+            scene_model.layout_t,
             tuple [int, ...],
-            observation_viewport_context_t,
+            update_context.viewport_t,
             tuple [tuple [float, float], tuple [float, float]] | None,
         ]
     ]:
+        layout_shape = self._resolve_layout_shape (
+            layer_adapter,
+            square_side_px,
+            measurement_square_side_px,
+            measurement_area_width_px,
+            measurement_area_height_px,
+            timings_ms,
+        )
+        if layout_shape is None:
+            return None
+        return layout_shape.as_legacy_tuple ()
+
+    def _resolve_layout_shape (
+        self,
+        layer_adapter: image_layer_adapter_t,
+        square_side_px: Optional[float] = None,
+        measurement_square_side_px: Optional[float] = None,
+        measurement_area_width_px: Optional[float] = None,
+        measurement_area_height_px: Optional[float] = None,
+        timings_ms: Optional[list [tuple [str, float]]] = None,
+    ) -> _layout_shape_t | None:
         if not layer_adapter.is_valid:
             return None
         image_shape_started_at = perf_counter ()
@@ -108,7 +152,7 @@ class observation_overlay_update_context_controller_t:
             if placement_bounds_yx is not None
             else (
                 viewport_context.center_yx
-                if isinstance (viewport_context, observation_viewport_context_t)
+                if isinstance (viewport_context, update_context.viewport_t)
                 else self._preferred_overlay_center_yx (
                     layer_adapter,
                     image_shape,
@@ -165,7 +209,13 @@ class observation_overlay_update_context_controller_t:
         )
         if timings_ms is not None:
             timings_ms.append (("prepare.measurement_area_geometry", self._elapsed_ms (measurement_area_geometry_started_at)))
-        return observation_layout, measurement_area_geometry, image_shape, viewport_context, placement_bounds_yx
+        return _layout_shape_t (
+            observation_layout,
+            measurement_area_geometry,
+            image_shape,
+            viewport_context,
+            placement_bounds_yx,
+        )
 
     def prepare_overlay_update (
         self,
@@ -175,9 +225,9 @@ class observation_overlay_update_context_controller_t:
         measurement_square_side_px: Optional[float] = None,
         measurement_area_width_px: Optional[float] = None,
         measurement_area_height_px: Optional[float] = None,
-    ) -> Optional[observation_overlay_update_context_t]:
+    ) -> Optional[update_context.root_t]:
         prepare_timings_ms: list [tuple [str, float]] = []
-        layout_shape = self.resolve_layout_and_shape (
+        layout_shape = self._resolve_layout_shape (
             layer_adapter,
             square_side_px,
             measurement_square_side_px,
@@ -188,26 +238,25 @@ class observation_overlay_update_context_controller_t:
         if layout_shape is None:
             self._set_status_text (self._status_messages.invalid_image_data ())
             return None
-        observation_layout, measurement_area_geometry, image_shape, viewport_context, placement_bounds_yx = layout_shape
         layer_bundle = self._prepare_layer_bundle (
             source_layer = layer_adapter.layer,
             source_layer_key = str(layer_adapter.layer_key or ""),
-            shapes_timing_name = "prepare.ensure_observation_layer",
-            points_timing_name = "prepare.ensure_observation_text_layer",
-            scene_timing_name = "prepare.scene_observation_layer",
+            source_timing_name = "prepare.source_layer_context",
+            visual_timing_name = "prepare.visual_display_context",
+            scene_timing_name = "prepare.runtime_scene",
             timings_ms = prepare_timings_ms,
         )
         if layer_bundle is None:
-            self._set_status_text (self._status_messages.cannot_create_overlay_layer ())
+            self._set_status_text (self._status_messages.cannot_prepare_overlay_context ())
             return None
         resolved_prepare_timings_ms = tuple (prepare_timings_ms)
-        return observation_overlay_update_context_t (
+        return update_context.root_t (
             layer_adapter,
-            observation_layout,
-            measurement_area_geometry,
-            image_shape,
-            viewport_context,
-            placement_bounds_yx,
+            layout_shape.observation_layout,
+            layout_shape.measurement_area_geometry,
+            layout_shape.image_shape,
+            layout_shape.viewport_context,
+            layout_shape.placement_bounds_yx,
             layer_bundle,
             resolved_prepare_timings_ms,
         )
@@ -257,23 +306,23 @@ class observation_overlay_update_context_controller_t:
         *,
         source_layer,
         source_layer_key: str,
-        shapes_timing_name: str,
-        points_timing_name: str,
+        source_timing_name: str,
+        visual_timing_name: str,
         scene_timing_name: str,
         timings_ms: list [tuple [str, float]],
-    ) -> observation_overlay_layer_bundle_t | None:
+    ) -> update_context.layer_bundle_t | None:
         source_adapter = image_layer_adapter_t(source_layer)
         if not source_adapter.is_valid:
             return None
-        timings_ms.append ((str (shapes_timing_name), 0.0))
-        timings_ms.append ((str (points_timing_name), 0.0))
+        timings_ms.append ((str (source_timing_name), 0.0))
+        timings_ms.append ((str (visual_timing_name), 0.0))
         base_scene = self._timed_base_scene (
             source_layer_key,
             scene_timing_name,
             timings_ms,
         )
-        return observation_overlay_layer_bundle_t (
-            base_scene = base_scene,
+        return update_context.layer_bundle_t (
+            base_scene,
             source_layer_key = str(source_layer_key or ""),
             source_layer = source_adapter.layer,
         )
@@ -289,8 +338,8 @@ class observation_overlay_update_context_controller_t:
         runtime_store = self._runtime_store
         if runtime_store is not None:
             scene = runtime_store.current_scene(source_layer_key)
-        if not isinstance(scene, observation_overlay_scene_t):
-            scene = observation_overlay_scene_t.empty()
+        if not isinstance(scene, scene_model.scene_t):
+            scene = scene_model.scene_t.empty()
         timings_ms.append ((str (timing_name), self._elapsed_ms (started_at)))
         return scene
 
@@ -298,7 +347,7 @@ class observation_overlay_update_context_controller_t:
         self,
         layer_adapter: image_layer_adapter_t,
         image_shape: tuple [int, ...],
-    ) -> observation_viewport_context_t:
+    ) -> update_context.viewport_t:
         normalized_fallback_center = self._preferred_overlay_center_yx (
             layer_adapter,
             image_shape,
@@ -329,10 +378,10 @@ class observation_overlay_update_context_controller_t:
                 image_bounds_yx = fallback_bounds,
                 fallback = fallback_bounds,
             )
-            return observation_viewport_context_t (
-                center_yx = center_data_yx,
-                visible_bounds_yx = visible_bounds,
-                viewport_size_px = viewport_bounds.viewport_size_px,
+            return update_context.viewport_t (
+                center_data_yx,
+                visible_bounds,
+                viewport_bounds.viewport_size_px,
                 camera_zoom = float (zoom),
                 data_per_screen_px_yx = viewport_bounds.data_per_screen_px_yx,
                 image_shape_yx = image_shape_yx,
@@ -342,14 +391,14 @@ class observation_overlay_update_context_controller_t:
         if center_world_yx is None:
             resolved_camera_zoom = float (zoom)
             data_per_screen_px_yx = self._fallback_data_per_screen_px_yx (zoom)
-            return observation_viewport_context_t (
-                center_yx = normalized_fallback_center,
-                visible_bounds_yx = fallback_bounds,
-                viewport_size_px = canvas_size_px,
-                camera_zoom = resolved_camera_zoom,
-                data_per_screen_px_yx = data_per_screen_px_yx,
-                image_shape_yx = image_shape_yx,
-                image_bounds_yx = fallback_bounds,
+            return update_context.viewport_t (
+                normalized_fallback_center,
+                fallback_bounds,
+                canvas_size_px,
+                image_shape_yx,
+                fallback_bounds,
+                resolved_camera_zoom,
+                data_per_screen_px_yx,
             )
         half_h_world = 0.5 * float (canvas_size_px [0]) / float (zoom)
         half_w_world = 0.5 * float (canvas_size_px [1]) / float (zoom)
@@ -397,14 +446,14 @@ class observation_overlay_update_context_controller_t:
             fallback = fallback_bounds,
         )
         resolved_camera_zoom = float (zoom)
-        return observation_viewport_context_t (
-            center_yx = center_data_yx,
-            visible_bounds_yx = visible_bounds,
-            viewport_size_px = canvas_size_px,
-            camera_zoom = resolved_camera_zoom,
-            data_per_screen_px_yx = data_per_screen_px_yx,
-            image_shape_yx = image_shape_yx,
-            image_bounds_yx = fallback_bounds,
+        return update_context.viewport_t (
+            center_data_yx,
+            visible_bounds,
+            canvas_size_px,
+            image_shape_yx,
+            fallback_bounds,
+            resolved_camera_zoom,
+            data_per_screen_px_yx,
         )
 
     def _current_camera_center_yx (self) -> tuple [float, float] | None:
@@ -485,7 +534,7 @@ class observation_overlay_update_context_controller_t:
         viewport_size_px: tuple [float, float],
         fallback_zoom: float,
     ) -> tuple [float, float]:
-        fallback = observation_overlay_update_context_controller_t._fallback_data_per_screen_px_yx (
+        fallback = observation_update_context_controller_t._fallback_data_per_screen_px_yx (
             fallback_zoom,
         )
         try:
@@ -517,7 +566,7 @@ class observation_overlay_update_context_controller_t:
                     return (y, x)
             except Exception:
                 pass
-        bounds = observation_overlay_update_context_controller_t._image_bounds_yx (image_shape)
+        bounds = observation_update_context_controller_t._image_bounds_yx (image_shape)
         top_left, bottom_right = bounds
         return (
             0.5 * (float (top_left [0]) + float (bottom_right [0])),
@@ -825,7 +874,7 @@ class observation_overlay_update_context_controller_t:
         image_bounds_yx: tuple [tuple [float, float], tuple [float, float]],
         fallback: tuple [tuple [float, float], tuple [float, float]],
     ) -> tuple [tuple [float, float], tuple [float, float]]:
-        normalized = observation_overlay_update_context_controller_t._maybe_normalized_bounds_yx (
+        normalized = observation_update_context_controller_t._maybe_normalized_bounds_yx (
             bounds_yx,
         )
         if normalized is None:

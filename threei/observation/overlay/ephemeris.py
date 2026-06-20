@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from threei.observation.overlay.debug import observation_overlay_debug_reporter_t
+from threei.observation.overlay.debug import observation_debug_reporter_t
 from threei.observation.target_ephemeris_provider import (
     cached_ephemeris_provider_t,
     horizons_ephemeris_provider_t,
@@ -28,6 +28,7 @@ class observation_ephemeris_resolution_t:
     used_observer_location_id: str = ""
     failed_observer_attempts: tuple [str, ...] = ()
     timings_ms: tuple [tuple [str, float], ...] = ()
+    status: str = ""
 
 
 @dataclass (slots = True, frozen = True)
@@ -37,13 +38,13 @@ class observation_ephemeris_job_t:
     target_heliocentric_distance_au: Any
 
 
-class observation_overlay_ephemeris_resolver_t:
+class observation_ephemeris_resolver_t:
     def __init__ (
         self,
         *,
         ephemeris_provider: target_ephemeris_provider_t | None = None,
         ephemeris_request_builder: target_ephemeris_request_builder_t | None = None,
-        debug_reporter: observation_overlay_debug_reporter_t | None = None,
+        debug_reporter: observation_debug_reporter_t | None = None,
         target_name_override_getter: Callable[[], Any] | None = None,
         ephemeris_result_callback: Callable[..., Any] | None = None,
     ):
@@ -59,8 +60,8 @@ class observation_overlay_ephemeris_resolver_t:
         )
         self._debug_reporter = (
             debug_reporter
-            if isinstance (debug_reporter, observation_overlay_debug_reporter_t)
-            else observation_overlay_debug_reporter_t ()
+            if isinstance (debug_reporter, observation_debug_reporter_t)
+            else observation_debug_reporter_t ()
         )
         self._target_name_override_getter = target_name_override_getter if callable (target_name_override_getter) else None
         self._ephemeris_result_callback = ephemeris_result_callback if callable (ephemeris_result_callback) else None
@@ -140,6 +141,7 @@ class observation_overlay_ephemeris_resolver_t:
                 resolved_used_observer_location_id,
                 resolved_failed_observer_attempts,
                 resolved_timings_ms,
+                "",
             )
 
         result = self._ephemeris_provider.resolve (request)
@@ -167,6 +169,7 @@ class observation_overlay_ephemeris_resolver_t:
         resolved_used_observer_location_id = str (getattr (result, "used_observer_location_id", "") or "")
         resolved_failed_observer_attempts = tuple (getattr (result, "failed_observer_attempts", ()) or ())
         resolved_timings_ms = tuple (getattr (result, "timings_ms", ()))
+        resolved_status = str (getattr (result, "status", "") or "")
         return observation_ephemeris_resolution_t (
             target_distance_au,
             target_heliocentric_distance_au,
@@ -178,6 +181,7 @@ class observation_overlay_ephemeris_resolver_t:
             resolved_used_observer_location_id,
             resolved_failed_observer_attempts,
             resolved_timings_ms,
+            resolved_status,
         )
 
     def cached_resolution_for_job (
@@ -210,6 +214,7 @@ class observation_overlay_ephemeris_resolver_t:
             str (getattr (result, "used_observer_location_id", "") or ""),
             tuple (getattr (result, "failed_observer_attempts", ()) or ()),
             tuple (getattr (result, "timings_ms", ()) or ()),
+            str (getattr (result, "status", "") or ""),
         )
 
     def safe_target_name_override (self) -> str:

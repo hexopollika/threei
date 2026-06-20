@@ -2,44 +2,49 @@
 # Licensed under the MIT License
 from __future__ import annotations
 
-from abc import ABC
-
 from threei.ui.display.nonlinear_panel import nonlinear_display_panel_t
-from threei.ui.display.segmented_tone_panel import segmented_tone_display_panel_t
+from threei.ui.derived_image.factory import derived_image_panel_factory_base_t
 
 
-class display_panel_factory_base_t (ABC):
-    DISPLAY_PANELS: dict [str, type] = {}
+class display_panel_factory_base_t (derived_image_panel_factory_base_t):
+    PANEL_TYPES: dict [str, type] = {}
+    TOOL_KIND = "display tool"
 
     def __init__ (
         self,
         viewer,
         *,
         compute_manager,
+        preview_size_getter = None,
+        target_center_getter = None,
     ):
-        self.viewer = viewer
-        self.compute_manager = compute_manager
+        super ().__init__ (
+            viewer,
+            compute_manager = compute_manager,
+            preview_size_getter = preview_size_getter,
+            target_center_getter = target_center_getter,
+        )
 
-    def _panel_for (self, tool_type: str):
-        panel_cls = self.DISPLAY_PANELS.get (str (tool_type))
-        if panel_cls is not None and hasattr (panel_cls, "create"):
-            return panel_cls
-        raise ValueError (f"unsupported display tool: {tool_type}")
-
-    def create (self, tool_type, base_layer, on_output_layer, job_key, base_layer_getter = None):
-        panel_cls = self._panel_for (tool_type)
-        return panel_cls.create (
-            self.viewer,
+    def create (
+        self,
+        tool_type,
+        base_layer,
+        on_output_layer,
+        job_key,
+        base_layer_getter = None,
+        preview_size_getter = None,
+    ):
+        return self._create_panel (
+            tool_type,
             base_layer,
             on_output_layer,
-            compute_manager = self.compute_manager,
             job_key = str (job_key),
             base_layer_getter = base_layer_getter,
+            preview_size_getter = preview_size_getter,
         )
 
 
 class default_display_panel_factory_t (display_panel_factory_base_t):
-    DISPLAY_PANELS = {
+    PANEL_TYPES = {
         "nonlinear": nonlinear_display_panel_t,
-        "segmented_tone": segmented_tone_display_panel_t,
     }

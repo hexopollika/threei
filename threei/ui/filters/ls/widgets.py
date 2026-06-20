@@ -9,15 +9,22 @@ from magicgui.widgets import ComboBox, Container, FloatSlider, IntSlider, Label
 from qtpy.QtWidgets import QFormLayout, QTabWidget, QVBoxLayout, QWidget
 
 from threei.ui.filters.ls.params import (
-    _DEFAULT_ANALYSIS_ANGLE_DELTA_DEG,
+    _DEFAULT_MAGS_ANGLE_DELTA_DEG,
+    _DEFAULT_MAGS_GHOST_RESPONSE_GAMMA,
+    _DEFAULT_MAGS_GHOST_SELECTIVITY,
+    _DEFAULT_MAGS_PRESERVE_GUARD,
+    _DEFAULT_MAGS_SCORE_SMOOTHING_SIGMA_PX,
+    _DEFAULT_MAGS_SUPPRESSION_STRENGTH,
+    _DEFAULT_MAGS_UNCERTAINTY_GUARD,
     _DEFAULT_ROTATION_BACKEND,
-    _DEFAULT_SAFE_GHOST_WEIGHT,
-    _DEFAULT_SPREAD_DELTA_DEG,
-    _DEFAULT_UNCERTAIN_DARK_WEIGHT,
     _ls_request_params_t,
     _normalized_ls_mode,
 )
 from threei.processing.ls import opencv_available, rotation_backend_choices
+
+
+_LS_DOCK_PREFERRED_FRACTION = 0.40
+_LS_DOCK_MIN_HEIGHT_PX = 360
 
 
 def _default_rotation_backend_for_ui() -> str:
@@ -29,10 +36,13 @@ def _default_rotation_backend_for_ui() -> str:
 class ls_panel_widgets_t:
     _TAB_MODES = ("classic", "ghost_aware")
     _GHOST_FORM_ROWS = (
-        ("rotation spread", "spread_delta_deg"),
-        ("ghost suppression", "safe_ghost_weight"),
-        ("uncertain darks", "uncertain_dark_weight"),
-        ("analysis spread", "analysis_angle_delta_deg"),
+        ("angle spread", "mags_angle_delta_deg"),
+        ("ghost suppression", "mags_suppression_strength"),
+        ("ghost response", "mags_ghost_response_gamma"),
+        ("ghost selectivity", "mags_ghost_selectivity"),
+        ("preserve guard", "mags_preserve_guard"),
+        ("uncertainty guard", "mags_uncertainty_guard"),
+        ("score smoothing", "mags_score_smoothing_sigma_px"),
     )
 
     def __init__(self, on_change):
@@ -87,42 +97,70 @@ class ls_panel_widgets_t:
             value=backend_status,
             label="",
         )
-        self.spread_delta_deg = FloatSlider(
-            name="spread_delta_deg",
+        self.mags_angle_delta_deg = FloatSlider(
+            name="mags_angle_delta_deg",
             label="",
-            value=_DEFAULT_SPREAD_DELTA_DEG,
+            value=_DEFAULT_MAGS_ANGLE_DELTA_DEG,
             min=0.0,
             max=2.0,
             step=0.05,
             tracking=False,
         )
-        self.safe_ghost_weight = FloatSlider(
-            name="safe_ghost_weight",
+        self.mags_suppression_strength = FloatSlider(
+            name="mags_suppression_strength",
             label="",
-            value=_DEFAULT_SAFE_GHOST_WEIGHT,
+            value=_DEFAULT_MAGS_SUPPRESSION_STRENGTH,
             min=0.0,
             max=1.0,
             step=0.05,
             tracking=True,
         )
-        self.uncertain_dark_weight = FloatSlider(
-            name="uncertain_dark_weight",
+        self.mags_score_smoothing_sigma_px = FloatSlider(
+            name="mags_score_smoothing_sigma_px",
             label="",
-            value=_DEFAULT_UNCERTAIN_DARK_WEIGHT,
+            value=_DEFAULT_MAGS_SCORE_SMOOTHING_SIGMA_PX,
             min=0.0,
-            max=0.5,
-            step=0.05,
-            tracking=True,
-        )
-        self.analysis_angle_delta_deg = FloatSlider(
-            name="analysis_angle_delta_deg",
-            label="",
-            value=_DEFAULT_ANALYSIS_ANGLE_DELTA_DEG,
-            min=0.0,
-            max=2.0,
+            max=4.0,
             step=0.05,
             tracking=False,
         )
+        self.mags_ghost_response_gamma = FloatSlider(
+            name="mags_ghost_response_gamma",
+            label="",
+            value=_DEFAULT_MAGS_GHOST_RESPONSE_GAMMA,
+            min=0.25,
+            max=2.0,
+            step=0.05,
+            tracking=True,
+        )
+        self.mags_ghost_selectivity = FloatSlider(
+            name="mags_ghost_selectivity",
+            label="",
+            value=_DEFAULT_MAGS_GHOST_SELECTIVITY,
+            min=0.0,
+            max=0.5,
+            step=0.01,
+            tracking=True,
+        )
+        self.mags_preserve_guard = FloatSlider(
+            name="mags_preserve_guard",
+            label="",
+            value=_DEFAULT_MAGS_PRESERVE_GUARD,
+            min=0.0,
+            max=3.0,
+            step=0.05,
+            tracking=True,
+        )
+        self.mags_uncertainty_guard = FloatSlider(
+            name="mags_uncertainty_guard",
+            label="",
+            value=_DEFAULT_MAGS_UNCERTAINTY_GUARD,
+            min=0.0,
+            max=3.0,
+            step=0.05,
+            tracking=True,
+        )
+
     @classmethod
     def create(cls, on_change):
         panel = cls(on_change)
@@ -166,10 +204,13 @@ class ls_panel_widgets_t:
                     label="",
                 ),
                 rows=[
-                    ("rotation spread", self.spread_delta_deg),
-                    ("ghost suppression", self.safe_ghost_weight),
-                    ("uncertain darks", self.uncertain_dark_weight),
-                    ("analysis spread", self.analysis_angle_delta_deg),
+                    ("angle spread", self.mags_angle_delta_deg),
+                    ("ghost suppression", self.mags_suppression_strength),
+                    ("ghost response", self.mags_ghost_response_gamma),
+                    ("ghost selectivity", self.mags_ghost_selectivity),
+                    ("preserve guard", self.mags_preserve_guard),
+                    ("uncertainty guard", self.mags_uncertainty_guard),
+                    ("score smoothing", self.mags_score_smoothing_sigma_px),
                 ],
             ),
             "MAGS",
@@ -213,10 +254,13 @@ class ls_panel_widgets_t:
             self.order,
             self.contrast_mode,
             self.rotation_backend,
-            self.spread_delta_deg,
-            self.safe_ghost_weight,
-            self.uncertain_dark_weight,
-            self.analysis_angle_delta_deg,
+            self.mags_angle_delta_deg,
+            self.mags_suppression_strength,
+            self.mags_ghost_response_gamma,
+            self.mags_ghost_selectivity,
+            self.mags_preserve_guard,
+            self.mags_uncertainty_guard,
+            self.mags_score_smoothing_sigma_px,
         ):
             widget.changed.connect(self._submit_current_values)
         self._tabs.currentChanged.connect(self._on_tab_changed)
@@ -233,16 +277,21 @@ class ls_panel_widgets_t:
             "contrast_mode",
             "rotation_backend",
             "rotation_backend_status",
-            "spread_delta_deg",
-            "safe_ghost_weight",
-            "uncertain_dark_weight",
-            "analysis_angle_delta_deg",
+            "mags_angle_delta_deg",
+            "mags_suppression_strength",
+            "mags_ghost_response_gamma",
+            "mags_ghost_selectivity",
+            "mags_preserve_guard",
+            "mags_uncertainty_guard",
+            "mags_score_smoothing_sigma_px",
         ):
             if not hasattr(self._widget, name):
                 setattr(self._widget, name, getattr(self, name))
         self._widget._ls_mode_tabs = self._tabs
         self._widget._ls_panel_widgets = self
         self._widget._ls_ghost_form_rows = tuple(self._GHOST_FORM_ROWS)
+        self._widget._pipeline_dock_preferred_fraction = _LS_DOCK_PREFERRED_FRACTION
+        self._widget._pipeline_dock_min_height_px = _LS_DOCK_MIN_HEIGHT_PX
 
     def _on_tab_changed(self, index: int) -> None:
         if 0 <= int(index) < len(self._TAB_MODES):
@@ -257,10 +306,13 @@ class ls_panel_widgets_t:
             order=self.order.value,
             contrast_mode=self.contrast_mode.value,
             rotation_backend=self.rotation_backend.value,
-            spread_delta_deg=self.spread_delta_deg.value,
-            safe_ghost_weight=self.safe_ghost_weight.value,
-            uncertain_dark_weight=self.uncertain_dark_weight.value,
-            analysis_angle_delta_deg=self.analysis_angle_delta_deg.value,
+            mags_angle_delta_deg=self.mags_angle_delta_deg.value,
+            mags_suppression_strength=self.mags_suppression_strength.value,
+            mags_ghost_response_gamma=self.mags_ghost_response_gamma.value,
+            mags_ghost_selectivity=self.mags_ghost_selectivity.value,
+            mags_preserve_guard=self.mags_preserve_guard.value,
+            mags_uncertainty_guard=self.mags_uncertainty_guard.value,
+            mags_score_smoothing_sigma_px=self.mags_score_smoothing_sigma_px.value,
         )
 
 
@@ -315,10 +367,13 @@ class ls_panel_controller_t:
         order=3,
         contrast_mode="symmetric",
         rotation_backend=None,
-        spread_delta_deg=_DEFAULT_SPREAD_DELTA_DEG,
-        safe_ghost_weight=_DEFAULT_SAFE_GHOST_WEIGHT,
-        uncertain_dark_weight=_DEFAULT_UNCERTAIN_DARK_WEIGHT,
-        analysis_angle_delta_deg=_DEFAULT_ANALYSIS_ANGLE_DELTA_DEG,
+        mags_angle_delta_deg=_DEFAULT_MAGS_ANGLE_DELTA_DEG,
+        mags_suppression_strength=_DEFAULT_MAGS_SUPPRESSION_STRENGTH,
+        mags_ghost_response_gamma=_DEFAULT_MAGS_GHOST_RESPONSE_GAMMA,
+        mags_ghost_selectivity=_DEFAULT_MAGS_GHOST_SELECTIVITY,
+        mags_preserve_guard=_DEFAULT_MAGS_PRESERVE_GUARD,
+        mags_uncertainty_guard=_DEFAULT_MAGS_UNCERTAINTY_GUARD,
+        mags_score_smoothing_sigma_px=_DEFAULT_MAGS_SCORE_SMOOTHING_SIGMA_PX,
         show_debug_layers=False,
         show_comparison_layers=False,
     ):
@@ -338,13 +393,16 @@ class ls_panel_controller_t:
                 clip=float(clip),
                 order=int(order),
                 preview_size=int(self._preview_size()),
-                center=(float(center[0]), float(center[1])),
+                target_center_yx=(float(center[0]), float(center[1])),
                 contrast_mode=str(contrast_mode),
                 rotation_backend=str(rotation_backend or _default_rotation_backend_for_ui()),
-                spread_delta_deg=float(spread_delta_deg),
-                safe_ghost_weight=float(safe_ghost_weight),
-                uncertain_dark_weight=float(uncertain_dark_weight),
-                analysis_angle_delta_deg=float(analysis_angle_delta_deg),
+                mags_angle_delta_deg=float(mags_angle_delta_deg),
+                mags_suppression_strength=float(mags_suppression_strength),
+                mags_ghost_response_gamma=float(mags_ghost_response_gamma),
+                mags_ghost_selectivity=float(mags_ghost_selectivity),
+                mags_preserve_guard=float(mags_preserve_guard),
+                mags_uncertainty_guard=float(mags_uncertainty_guard),
+                mags_score_smoothing_sigma_px=float(mags_score_smoothing_sigma_px),
                 show_debug_layers=bool(show_debug_layers),
                 show_comparison_layers=bool(show_comparison_layers),
             ).to_payload(),

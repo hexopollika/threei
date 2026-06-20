@@ -28,6 +28,21 @@ class layer_viewport_model_snapshot_t:
     camera_zoom: float
 
 
+@dataclass(frozen=True, slots=True)
+class _data_per_screen_request_t:
+    bounds_yx: tuple[tuple[float, float], tuple[float, float]]
+    viewport_size_px: tuple[float, float]
+    fallback_zoom: float
+
+
+@dataclass(frozen=True, slots=True)
+class _viewport_window_request_t:
+    viewport_bounds: layer_viewport_bounds_t
+    image_shape_yx: tuple[int, int]
+    margin_ratio: float
+    min_size_px: int
+
+
 def _last_two_float_tuple(value: Any) -> tuple[float, float] | None:
     try:
         values = tuple(value)
@@ -123,19 +138,14 @@ def _viewport_size_from_bounds_px(
     return (height, width)
 
 
-def _data_per_screen_px_yx(
-    *,
-    bounds_yx: tuple[tuple[float, float], tuple[float, float]],
-    viewport_size_px: tuple[float, float],
-    fallback_zoom: float,
-) -> tuple[float, float]:
-    fallback_value = 1.0 / max(1.0e-9, float(fallback_zoom))
+def _data_per_screen_px_yx(request: _data_per_screen_request_t) -> tuple[float, float]:
+    fallback_value = 1.0 / max(1.0e-9, float(request.fallback_zoom))
     fallback = (float(fallback_value), float(fallback_value))
     try:
-        top_left = bounds_yx[0]
-        bottom_right = bounds_yx[1]
-        height_px = max(1.0, float(viewport_size_px[0]))
-        width_px = max(1.0, float(viewport_size_px[1]))
+        top_left = request.bounds_yx[0]
+        bottom_right = request.bounds_yx[1]
+        height_px = max(1.0, float(request.viewport_size_px[0]))
+        width_px = max(1.0, float(request.viewport_size_px[1]))
         data_y = abs(float(bottom_right[0]) - float(top_left[0])) / height_px
         data_x = abs(float(bottom_right[1]) - float(top_left[1])) / width_px
     except Exception:
@@ -265,14 +275,10 @@ def _transform_viewport_bounds_yx(viewer, layer) -> layer_viewport_bounds_t | No
             0.5 * (float(bounds_yx[0][1]) + float(bounds_yx[1][1])),
         )
     return layer_viewport_bounds_t(
-        visible_bounds_yx=bounds_yx,
-        viewport_size_px=viewport_size_px,
-        center_yx=center_yx,
-        data_per_screen_px_yx=_data_per_screen_px_yx(
-            bounds_yx=bounds_yx,
-            viewport_size_px=viewport_size_px,
-            fallback_zoom=zoom,
-        ),
+        bounds_yx,
+        viewport_size_px,
+        center_yx,
+        _data_per_screen_px_yx(_data_per_screen_request_t(bounds_yx, viewport_size_px, zoom)),
     )
 
 
@@ -349,14 +355,10 @@ def _camera_viewport_bounds_yx(viewer, layer) -> layer_viewport_bounds_t | None:
             0.5 * (float(bounds_yx[0][1]) + float(bounds_yx[1][1])),
         )
     return layer_viewport_bounds_t(
-        visible_bounds_yx=bounds_yx,
-        viewport_size_px=canvas_size_px,
-        center_yx=center_yx,
-        data_per_screen_px_yx=_data_per_screen_px_yx(
-            bounds_yx=bounds_yx,
-            viewport_size_px=canvas_size_px,
-            fallback_zoom=zoom,
-        ),
+        bounds_yx,
+        canvas_size_px,
+        center_yx,
+        _data_per_screen_px_yx(_data_per_screen_request_t(bounds_yx, canvas_size_px, zoom)),
     )
 
 
@@ -376,13 +378,13 @@ def inspect_viewport_models_yx(viewer, layer, image_shape) -> layer_viewport_mod
         else None
     )
     return layer_viewport_model_snapshot_t(
-        camera_bounds=_camera_viewport_bounds_yx(viewer, layer),
-        transform_center_yx=transform_center_data_yx,
-        transform_corner_bounds_yx=_transform_corner_bounds_yx(viewer, layer),
-        viewbox_canvas_bounds_xy=viewbox_canvas_bounds_xy,
-        canvas_size_px_yx=_current_canvas_size_px(viewer),
-        camera_center_yx=_current_camera_center_yx(viewer),
-        camera_zoom=_current_camera_zoom(viewer),
+        _camera_viewport_bounds_yx(viewer, layer),
+        transform_center_data_yx,
+        _transform_corner_bounds_yx(viewer, layer),
+        viewbox_canvas_bounds_xy,
+        _current_canvas_size_px(viewer),
+        _current_camera_center_yx(viewer),
+        _current_camera_zoom(viewer),
     )
 
 
@@ -418,45 +420,27 @@ def layer_canvas_viewport_bounds_yx(viewer, layer, image_shape) -> layer_viewpor
         )
     zoom = _current_camera_zoom(viewer)
     return layer_viewport_bounds_t(
-        visible_bounds_yx=bounds_yx,
-        viewport_size_px=viewport_size_px,
-        center_yx=center_yx,
-        data_per_screen_px_yx=_data_per_screen_px_yx(
-            bounds_yx=bounds_yx,
-            viewport_size_px=viewport_size_px,
-            fallback_zoom=zoom,
-        ),
+        bounds_yx,
+        viewport_size_px,
+        center_yx,
+        _data_per_screen_px_yx(_data_per_screen_request_t(bounds_yx, viewport_size_px, zoom)),
     )
 
 
-def layer_view_window_yx(
-    viewer,
-    layer,
-    image_shape,
-    *,
-    margin_ratio: float = 0.15,
-    min_size_px: int = 16,
-) -> tuple[int, int, int, int] | None:
-    shape_yx = _image_shape_yx(image_shape)
-    if shape_yx is None:
-        return None
-    image_h, image_w = shape_yx
-
-    viewport_bounds = layer_viewport_bounds_yx(viewer, layer, image_shape)
-    if viewport_bounds is None:
-        return None
-    top = float(viewport_bounds.visible_bounds_yx[0][0])
-    left = float(viewport_bounds.visible_bounds_yx[0][1])
-    bottom = float(viewport_bounds.visible_bounds_yx[1][0])
-    right = float(viewport_bounds.visible_bounds_yx[1][1])
+def _window_from_viewport_bounds_yx(request: _viewport_window_request_t) -> tuple[int, int, int, int] | None:
+    image_h, image_w = request.image_shape_yx
+    top = float(request.viewport_bounds.visible_bounds_yx[0][0])
+    left = float(request.viewport_bounds.visible_bounds_yx[0][1])
+    bottom = float(request.viewport_bounds.visible_bounds_yx[1][0])
+    right = float(request.viewport_bounds.visible_bounds_yx[1][1])
     if not all(np.isfinite(value) for value in (top, left, bottom, right)):
         return None
 
-    height = max(float(bottom - top), float(min_size_px))
-    width = max(float(right - left), float(min_size_px))
+    height = max(float(bottom - top), float(request.min_size_px))
+    width = max(float(right - left), float(request.min_size_px))
     center_y = 0.5 * (top + bottom)
     center_x = 0.5 * (left + right)
-    margin = max(0.0, float(margin_ratio))
+    margin = max(0.0, float(request.margin_ratio))
     height *= 1.0 + 2.0 * margin
     width *= 1.0 + 2.0 * margin
 
@@ -472,3 +456,48 @@ def layer_view_window_yx(
     if y0 >= y1 or x0 >= x1:
         return None
     return (y0, y1, x0, x1)
+
+
+def layer_canvas_view_window_yx(
+    viewer,
+    layer,
+    image_shape,
+    *,
+    margin_ratio: float = 0.15,
+    min_size_px: int = 16,
+) -> tuple[int, int, int, int] | None:
+    shape_yx = _image_shape_yx(image_shape)
+    if shape_yx is None:
+        return None
+    viewport_bounds = layer_canvas_viewport_bounds_yx(viewer, layer, image_shape)
+    if viewport_bounds is None:
+        return None
+    return _window_from_viewport_bounds_yx(_viewport_window_request_t(
+        viewport_bounds,
+        shape_yx,
+        margin_ratio,
+        min_size_px,
+    ))
+
+
+def layer_view_window_yx(
+    viewer,
+    layer,
+    image_shape,
+    *,
+    margin_ratio: float = 0.15,
+    min_size_px: int = 16,
+) -> tuple[int, int, int, int] | None:
+    shape_yx = _image_shape_yx(image_shape)
+    if shape_yx is None:
+        return None
+
+    viewport_bounds = layer_viewport_bounds_yx(viewer, layer, image_shape)
+    if viewport_bounds is None:
+        return None
+    return _window_from_viewport_bounds_yx(_viewport_window_request_t(
+        viewport_bounds,
+        shape_yx,
+        margin_ratio,
+        min_size_px,
+    ))

@@ -7,7 +7,7 @@ from typing import Literal, Mapping, cast
 
 import numpy as np
 
-center_method_t = Literal["seed", "centroid", "centroid+fit"]
+center_method_t = Literal["seed", "centroid", "centroid+fit", "manual"]
 center_quality_label_t = Literal["fail", "weak", "good", "precise"]
 center_status_code_t = Literal[
     "ok",
@@ -234,7 +234,7 @@ class layer_center_record_t:
         quality_label = str(
             metadata.get(TARGET_CENTER_QUALITY_LABEL_KEY, "")
         ).strip().lower()
-        if method not in {"seed", "centroid", "centroid+fit"}:
+        if method not in {"seed", "centroid", "centroid+fit", "manual"}:
             return None
         if quality_label not in {"fail", "weak", "good", "precise"}:
             return None
